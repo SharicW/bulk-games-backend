@@ -10,12 +10,12 @@ const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? true 
-      : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
+  origin: process.env.NODE_ENV === 'production' 
+    ? "https://bulk-games-frontend-production.up.railway.app"
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST'],
+  credentials: true
+}
 });
 
 app.use(cors());
@@ -45,8 +45,8 @@ function broadcastGameState(lobbyCode: string): void {
 }
 
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
-  
+  console.log(`✅ Client connected: ${socket.id} from ${socket.handshake.address}`);
+   socket.emit('test', { message: 'Backend works!', timestamp: Date.now() });
   socket.on('createLobby', (data: { odotpid: string; nickname: string; avatarUrl: string | null }, callback) => {
     const { odotpid, nickname, avatarUrl } = data;
     
@@ -146,3 +146,4 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
