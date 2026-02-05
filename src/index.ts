@@ -18,8 +18,6 @@ const io = new Server(httpServer, {
 }
 });
 
-app.use(cors());
-app.use(express.json());
 
 // Store socket to player mappings
 const socketToPlayer = new Map<string, { odotpid: string; lobbyCode: string }>();
@@ -146,4 +144,5 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
