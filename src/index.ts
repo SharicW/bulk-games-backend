@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors, { type CorsOptions } from 'cors';
@@ -33,17 +33,40 @@ const ENV_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.FRONTEND_URL
 
 const ALLOWED_ORIGINS = new Set<string>([...DEFAULT_ALLOWED_ORIGINS, ...ENV_ALLOWED_ORIGINS]);
 
-const corsOptions: CorsOptions = {
-  origin: (origin, cb) => {
-    // allow requests without Origin (curl, server-to-server)
-    if (!origin) return cb(null, true);
+function isAllowedOrigin(origin?: string): boolean {
+  if (!origin) return true;
+  const o = normalizeOrigin(origin);
+  return ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o);
+}
 
-    const o = normalizeOrigin(origin);
-    if (ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o)) return cb(null, true);
+// Hard CORS middleware: гарантированно отвечает на preflight и выставляет заголовки
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin as string | undefined;
 
+  if (origin && isAllowedOrigin(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+
+    const reqHeaders = req.headers['access-control-request-headers'];
+    res.header(
+      'Access-Control-Allow-Headers',
+      typeof reqHeaders === 'string' ? reqHeaders : 'Content-Type, Authorization',
+    );
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  } else if (origin) {
     console.warn(`[CORS] Blocked origin: ${origin}`);
-    return cb(null, false);
-  },
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+const corsOptions: CorsOptions = {
+  origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -59,11 +82,6 @@ app.use(express.json({ limit: '5mb' }));
 /* ── Auth / profile routes ─────────────────────────────────────── */
 app.use(authRouter);
 
-const isAllowedOrigin = (origin?: string): boolean => {
-  if (!origin) return true;
-  const o = normalizeOrigin(origin);
-  return ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o);
-};
 
 /* ── Socket.IO ─────────────────────────────────────────────────── */
 const io = new Server(httpServer, {
