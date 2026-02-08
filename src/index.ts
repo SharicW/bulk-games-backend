@@ -1,7 +1,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import { PokerGame } from './poker/game.js';
 import type { PlayerAction } from './types.js';
 import { UnoGame } from './uno/game.js';
@@ -12,23 +12,36 @@ import authRouter, { verifyToken, type AuthUser } from './auth.js';
 const app = express();
 const httpServer = createServer(app);
 
+const normalizeOrigin = (o: string): string =>
+  o.trim().replace(/\/$/, '').toLowerCase();
+
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://bulk-games-frontend-production.up.railway.app',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-];
+].map(normalizeOrigin);
 
-// Railway tip: set CORS_ORIGIN="https://your-frontend-domain" (comma-separated if multiple)
-const ALLOWED_ORIGINS: string[] = (process.env.CORS_ORIGIN || process.env.FRONTEND_URL)
-  ? (process.env.CORS_ORIGIN || process.env.FRONTEND_URL)!.split(',').map(s => s.trim()).filter(Boolean)
-  : DEFAULT_ALLOWED_ORIGINS;
+// Allows Railway preview/prod domains for this project (domain can change on redeploy)
+const RAILWAY_FRONTEND_REGEX = /^https:\/\/bulk-games-frontend[a-z0-9-]*\.up\.railway\.app$/;
 
-const corsOptions: import('cors').CorsOptions = {
+// Prefer CORS_ORIGIN (comma-separated), fallback to FRONTEND_URL
+const ENV_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(normalizeOrigin)
+  .filter(Boolean);
+
+const ALLOWED_ORIGINS = new Set<string>([...DEFAULT_ALLOWED_ORIGINS, ...ENV_ALLOWED_ORIGINS]);
+
+const corsOptions: CorsOptions = {
   origin: (origin, cb) => {
     // allow requests without Origin (curl, server-to-server)
     if (!origin) return cb(null, true);
-    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+
+    const o = normalizeOrigin(origin);
+    if (ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o)) return cb(null, true);
+
+    console.warn(`[CORS] Blocked origin: ${origin}`);
     return cb(null, false);
   },
   credentials: true,
@@ -36,6 +49,7 @@ const corsOptions: import('cors').CorsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 204,
 };
+
 
 /* ── Express middleware ────────────────────────────────────────── */
 app.use(cors(corsOptions));
@@ -45,14 +59,21 @@ app.use(express.json({ limit: '5mb' }));
 /* ── Auth / profile routes ─────────────────────────────────────── */
 app.use(authRouter);
 
+const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true;
+  const o = normalizeOrigin(origin);
+  return ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o);
+};
+
 /* ── Socket.IO ─────────────────────────────────────────────────── */
 const io = new Server(httpServer, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
     methods: ['GET', 'POST'],
     credentials: true,
   },
 });
+
 
 /* ── Socket auth middleware ────────────────────────────────────── */
 async function socketAuth(
