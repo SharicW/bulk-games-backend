@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import { createServer } from 'http';
-import { Server } from 'socket.io';
+import { Server, type Socket } from 'socket.io';
 import cors from 'cors';
 
 import { PokerGame } from './poker/game.js';
@@ -15,8 +15,7 @@ const httpServer = createServer(app);
 
 /* ───────────────────────── CORS ───────────────────────── */
 
-const normalizeOrigin = (o: string) =>
-  o.trim().replace(/\/$/, '').toLowerCase();
+const normalizeOrigin = (o: string) => o.trim().replace(/\/$/, '').toLowerCase();
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://bulk-games-frontend-production.up.railway.app',
@@ -36,10 +35,7 @@ const ENV_ALLOWED_ORIGINS = (
   .map(normalizeOrigin)
   .filter(Boolean);
 
-const ALLOWED_ORIGINS = new Set([
-  ...DEFAULT_ALLOWED_ORIGINS,
-  ...ENV_ALLOWED_ORIGINS,
-]);
+const ALLOWED_ORIGINS = new Set([...DEFAULT_ALLOWED_ORIGINS, ...ENV_ALLOWED_ORIGINS]);
 
 function isAllowedOrigin(origin?: string | null): boolean {
   if (!origin) return true;
@@ -57,10 +53,10 @@ app.use(
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-  })
+  }),
 );
 
-// ОБЯЗАТЕЛЬНО для preflight
+// preflight
 app.options('*', cors());
 
 /* ───────────────────── Middleware ───────────────────── */
@@ -87,10 +83,7 @@ const io = new Server(httpServer, {
 
 /* ───────────────── Socket auth ───────────────── */
 
-async function socketAuth(
-  socket: import('socket.io').Socket,
-  next: (err?: Error) => void,
-): Promise<void> {
+async function socketAuth(socket: Socket, next: (err?: Error) => void): Promise<void> {
   const token: string | undefined = socket.handshake.auth?.token;
   if (!token) return next(new Error('Authentication required'));
 
@@ -101,6 +94,7 @@ async function socketAuth(
   next();
 }
 
+/* apply auth to all namespaces */
 io.use(socketAuth);
 io.of('/uno').use(socketAuth);
 io.of('/poker').use(socketAuth);
@@ -109,10 +103,7 @@ io.of('/poker').use(socketAuth);
 
 type GameType = 'poker' | 'uno';
 
-const socketToPlayer = new Map<
-  string,
-  { userId: string; lobbyCode: string; gameType: GameType }
->();
+const socketToPlayer = new Map<string, { userId: string; lobbyCode: string; gameType: GameType }>();
 const playerToSocket = new Map<string, string>();
 
 const pokerGame = new PokerGame((code) => broadcastGameState(code));
@@ -120,6 +111,10 @@ const unoGame = new UnoGame(
   (code) => broadcastUnoState(code),
   (code) => !!pokerGame.getLobby(code),
 );
+
+function roomName(gameType: GameType, code: string) {
+  return `${gameType}:${code}`;
+}
 
 /* ───────────────── Broadcast helpers ───────────────── */
 
@@ -130,10 +125,7 @@ function broadcastGameState(code: string) {
   for (const p of lobby.players) {
     const socketId = playerToSocket.get(`poker:${p.playerId}`);
     if (!socketId) continue;
-    io.to(socketId).emit(
-      'gameState',
-      pokerGame.getClientState(code, p.playerId),
-    );
+    io.to(socketId).emit('gameState', pokerGame.getClientState(code, p.playerId));
   }
 }
 
@@ -144,22 +136,219 @@ function broadcastUnoState(code: string) {
   for (const p of lobby.players) {
     const socketId = playerToSocket.get(`uno:${p.playerId}`);
     if (!socketId) continue;
-    io.to(socketId).emit(
-      'gameState',
-      unoGame.getClientState(code, p.playerId),
-    );
+    io.to(socketId).emit('gameState', unoGame.getClientState(code, p.playerId));
   }
 }
 
 /* ───────────────── Socket handlers ─────────────────── */
 
-function registerHandlers(nsp: Server | ReturnType<Server['of']>) {
+function inferGameType(nspName: string, payload?: any): GameType {
+  if (nspName === '/uno') return 'uno';
+  if (nspName === '/poker') return 'poker';
+  // root namespace: rely on payload.gameType if sent
+  if (payload?.gameType === 'uno') return 'uno';
+  return 'poker';
+}
+
+function attachHandlers(nsp: ReturnType<Server['of']>) {
   nsp.on('connection', (socket) => {
     const user: AuthUser = socket.data.user;
 
-    socket.emit('test', {
-      message: 'Backend works',
-      userId: user.id,
+    socket.emit('test', { message: 'Backend works', userId: user.id });
+
+    socket.on('createLobby', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+
+      if (user.role !== 'host') {
+        ack?.({ success: false, error: 'Only host can create lobby' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const code = unoGame.createLobby(user.id, user.nickname, user.avatarUrl);
+        socket.join(roomName('uno', code));
+        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
+        playerToSocket.set(`uno:${user.id}`, socket.id);
+
+        ack?.({ success: true, code });
+        broadcastUnoState(code);
+        return;
+      }
+
+      const code = pokerGame.createLobby(user.id, user.nickname, user.avatarUrl);
+      socket.join(roomName('poker', code));
+      socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
+      playerToSocket.set(`poker:${user.id}`, socket.id);
+
+      ack?.({ success: true, code });
+      broadcastGameState(code);
+    });
+
+    socket.on('joinLobby', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const code: string | undefined = payload?.code;
+
+      if (!code) {
+        ack?.({ success: false, error: 'Lobby code is required' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const res = unoGame.joinLobby(code, user.id, user.nickname, user.avatarUrl);
+        if (!res.success) {
+          ack?.(res);
+          return;
+        }
+
+        socket.join(roomName('uno', code));
+        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
+        playerToSocket.set(`uno:${user.id}`, socket.id);
+
+        ack?.({ success: true, gameState: unoGame.getClientState(code, user.id) });
+        broadcastUnoState(code);
+        return;
+      }
+
+      const ok = pokerGame.joinLobby(code, user.id, user.nickname, user.avatarUrl);
+      if (!ok) {
+        ack?.({ success: false, error: 'Lobby not found or full' });
+        return;
+      }
+
+      socket.join(roomName('poker', code));
+      socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
+      playerToSocket.set(`poker:${user.id}`, socket.id);
+
+      ack?.({ success: true, gameState: pokerGame.getClientState(code, user.id) });
+      broadcastGameState(code);
+    });
+
+    socket.on('startGame', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const lobbyCode: string | undefined = payload?.lobbyCode;
+
+      if (!lobbyCode) {
+        ack?.({ success: false, error: 'lobbyCode is required' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const res = unoGame.startGame(lobbyCode, user.id);
+        if (!res.success) {
+          ack?.(res);
+          return;
+        }
+        ack?.({ success: true });
+        broadcastUnoState(lobbyCode);
+        return;
+      }
+
+      const ok = pokerGame.startGame(lobbyCode, user.id);
+      if (!ok) {
+        ack?.({ success: false, error: 'Only host can start / not enough players / already started' });
+        return;
+      }
+      ack?.({ success: true });
+      broadcastGameState(lobbyCode);
+    });
+
+    socket.on('playerAction', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const lobbyCode: string | undefined = payload?.lobbyCode;
+
+      if (!lobbyCode) {
+        ack?.({ success: false, error: 'lobbyCode is required' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const action: UnoPlayerAction | undefined = payload?.action;
+        if (!action) {
+          ack?.({ success: false, error: 'action is required' });
+          return;
+        }
+        const res = unoGame.handleAction(lobbyCode, user.id, action);
+        if (!res.success) {
+          ack?.(res);
+          return;
+        }
+        ack?.({ success: true });
+        broadcastUnoState(lobbyCode);
+        return;
+      }
+
+      const action: PlayerAction | undefined = payload?.action;
+      const amount: number | undefined = payload?.amount;
+
+      if (!action) {
+        ack?.({ success: false, error: 'action is required' });
+        return;
+      }
+
+      const ok = pokerGame.handleAction(lobbyCode, user.id, action, amount);
+      if (!ok) {
+        ack?.({ success: false, error: 'Invalid action / not your turn / lobby not found' });
+        return;
+      }
+
+      ack?.({ success: true });
+      broadcastGameState(lobbyCode);
+    });
+
+    socket.on('requestState', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const lobbyCode: string | undefined = payload?.lobbyCode;
+
+      if (!lobbyCode) {
+        ack?.({ success: false, error: 'lobbyCode is required' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const lobby = unoGame.getLobby(lobbyCode);
+        if (!lobby) {
+          ack?.({ success: false, error: 'Lobby not found' });
+          return;
+        }
+        ack?.({ success: true, gameState: unoGame.getClientState(lobbyCode, user.id) });
+        return;
+      }
+
+      const lobby = pokerGame.getLobby(lobbyCode);
+      if (!lobby) {
+        ack?.({ success: false, error: 'Lobby not found' });
+        return;
+      }
+      ack?.({ success: true, gameState: pokerGame.getClientState(lobbyCode, user.id) });
+    });
+
+    socket.on('endLobby', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const lobbyCode: string | undefined = payload?.lobbyCode;
+
+      if (!lobbyCode) {
+        ack?.({ success: false, error: 'lobbyCode is required' });
+        return;
+      }
+
+      if (gameType === 'uno') {
+        const res = unoGame.endLobby(lobbyCode, user.id);
+        if (!res.success) {
+          ack?.(res);
+          return;
+        }
+        io.in(roomName('uno', lobbyCode)).emit('lobbyEnded');
+        ack?.({ success: true });
+        return;
+      }
+
+      const ok = pokerGame.endLobby(lobbyCode, user.id);
+      if (!ok) {
+        ack?.({ success: false, error: 'Only host can end the lobby / lobby not found' });
+        return;
+      }
+      io.in(roomName('poker', lobbyCode)).emit('lobbyEnded');
+      ack?.({ success: true });
     });
 
     socket.on('disconnect', () => {
@@ -167,6 +356,7 @@ function registerHandlers(nsp: Server | ReturnType<Server['of']>) {
       if (!info) return;
 
       const { userId, lobbyCode, gameType } = info;
+
       socketToPlayer.delete(socket.id);
       playerToSocket.delete(`${gameType}:${userId}`);
 
@@ -181,9 +371,10 @@ function registerHandlers(nsp: Server | ReturnType<Server['of']>) {
   });
 }
 
-registerHandlers(io);
-registerHandlers(io.of('/uno'));
-registerHandlers(io.of('/poker'));
+/* attach to all */
+attachHandlers(io);
+attachHandlers(io.of('/uno'));
+attachHandlers(io.of('/poker'));
 
 /* ───────────────────── Start ───────────────────────── */
 
@@ -193,9 +384,7 @@ async function boot() {
   try {
     await runMigrations();
     console.log('Database ready');
-    httpServer.listen(PORT, () =>
-      console.log(`🚀 Server running on ${PORT}`),
-    );
+    httpServer.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
   } catch (e) {
     console.error('Migration failed:', e);
     process.exit(1);
