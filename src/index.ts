@@ -1,7 +1,8 @@
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express, { type Request, type Response } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import cors, { type CorsOptions } from 'cors';
+import cors from 'cors';
+
 import { PokerGame } from './poker/game.js';
 import type { PlayerAction } from './types.js';
 import { UnoGame } from './uno/game.js';
@@ -12,100 +13,90 @@ import authRouter, { verifyToken, type AuthUser } from './auth.js';
 const app = express();
 const httpServer = createServer(app);
 
-const normalizeOrigin = (o: string): string =>
+/* ───────────────────────── CORS ───────────────────────── */
+
+const normalizeOrigin = (o: string) =>
   o.trim().replace(/\/$/, '').toLowerCase();
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://bulk-games-frontend-production.up.railway.app',
   'http://localhost:5173',
   'http://localhost:3000',
-  'http://127.0.0.1:5173',
 ].map(normalizeOrigin);
 
-// Allows Railway preview/prod domains for this project (domain can change on redeploy)
-const RAILWAY_FRONTEND_REGEX = /^https:\/\/bulk-games-frontend[a-z0-9-]*\.up\.railway\.app$/;
+const RAILWAY_FRONTEND_REGEX =
+  /^https:\/\/bulk-games-frontend[a-z0-9-]*\.up\.railway\.app$/;
 
-// Prefer CORS_ORIGIN (comma-separated), fallback to FRONTEND_URL
-const ENV_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '')
+const ENV_ALLOWED_ORIGINS = (
+  process.env.CORS_ORIGIN ||
+  process.env.FRONTEND_URL ||
+  ''
+)
   .split(',')
   .map(normalizeOrigin)
   .filter(Boolean);
 
-const ALLOWED_ORIGINS = new Set<string>([...DEFAULT_ALLOWED_ORIGINS, ...ENV_ALLOWED_ORIGINS]);
+const ALLOWED_ORIGINS = new Set([
+  ...DEFAULT_ALLOWED_ORIGINS,
+  ...ENV_ALLOWED_ORIGINS,
+]);
 
-function isAllowedOrigin(origin?: string): boolean {
+function isAllowedOrigin(origin?: string | null): boolean {
   if (!origin) return true;
   const o = normalizeOrigin(origin);
   return ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o);
 }
 
-// Hard CORS middleware: гарантированно отвечает на preflight и выставляет заголовки
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = req.headers.origin as string | undefined;
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) return cb(null, true);
+      console.warn('[CORS] Blocked origin:', origin);
+      cb(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
-  if (origin && isAllowedOrigin(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
+// ОБЯЗАТЕЛЬНО для preflight
+app.options('*', cors());
 
-    const reqHeaders = req.headers['access-control-request-headers'];
-    res.header(
-      'Access-Control-Allow-Headers',
-      typeof reqHeaders === 'string' ? reqHeaders : 'Content-Type, Authorization',
-    );
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  } else if (origin) {
-    console.warn(`[CORS] Blocked origin: ${origin}`);
-  }
+/* ───────────────────── Middleware ───────────────────── */
 
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-
-const corsOptions: CorsOptions = {
-  origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 204,
-};
-
-
-/* ── Express middleware ────────────────────────────────────────── */
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '5mb' }));
 
-/* ── Auth / profile routes ─────────────────────────────────────── */
-app.use(authRouter);
+/* ───────────────────── Routes ───────────────────────── */
 
+app.use('/auth', authRouter);
 
-/* ── Socket.IO ─────────────────────────────────────────────────── */
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok' });
+});
+
+/* ───────────────────── Socket.IO ────────────────────── */
+
 const io = new Server(httpServer, {
   cors: {
     origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
-    methods: ['GET', 'POST'],
     credentials: true,
+    methods: ['GET', 'POST'],
   },
 });
 
+/* ───────────────── Socket auth ───────────────── */
 
-/* ── Socket auth middleware ────────────────────────────────────── */
 async function socketAuth(
   socket: import('socket.io').Socket,
   next: (err?: Error) => void,
 ): Promise<void> {
   const token: string | undefined = socket.handshake.auth?.token;
-  if (!token) {
-    return next(new Error('Authentication required'));
-  }
+  if (!token) return next(new Error('Authentication required'));
+
   const user = await verifyToken(token);
-  if (!user) {
-    return next(new Error('Invalid or expired token'));
-  }
+  if (!user) return next(new Error('Invalid token'));
+
   socket.data.user = user;
   next();
 }
@@ -114,271 +105,76 @@ io.use(socketAuth);
 io.of('/uno').use(socketAuth);
 io.of('/poker').use(socketAuth);
 
-/* ── Game instances ────────────────────────────────────────────── */
+/* ───────────────────── Games ───────────────────────── */
+
 type GameType = 'poker' | 'uno';
 
-const socketToPlayer = new Map<string, { odotpid: string; lobbyCode: string; gameType: GameType }>();
+const socketToPlayer = new Map<
+  string,
+  { userId: string; lobbyCode: string; gameType: GameType }
+>();
 const playerToSocket = new Map<string, string>();
 
-const pokerGame = new PokerGame((lobbyCode: string) => {
-  broadcastGameState(lobbyCode);
-});
-
+const pokerGame = new PokerGame((code) => broadcastGameState(code));
 const unoGame = new UnoGame(
-  (lobbyCode: string) => {
-    broadcastUnoState(lobbyCode);
-  },
-  (code: string) => !!pokerGame.getLobby(code),
+  (code) => broadcastUnoState(code),
+  (code) => !!pokerGame.getLobby(code),
 );
 
-/* ── Broadcast helpers ─────────────────────────────────────────── */
-function broadcastGameState(lobbyCode: string): void {
-  const lobby = pokerGame.getLobby(lobbyCode);
-  if (!lobby) return;
-  for (const player of lobby.players) {
-    const socketId = playerToSocket.get(`poker:${player.playerId}`);
-    if (socketId) {
-      const clientState = pokerGame.getClientState(lobbyCode, player.playerId);
-      io.to(socketId).emit('gameState', clientState);
-    }
-  }
-}
+/* ───────────────── Broadcast helpers ───────────────── */
 
-function broadcastUnoState(lobbyCode: string): void {
-  const lobby = unoGame.getLobby(lobbyCode);
+function broadcastGameState(code: string) {
+  const lobby = pokerGame.getLobby(code);
   if (!lobby) return;
-  for (const player of lobby.players) {
-    const socketId = playerToSocket.get(`uno:${player.playerId}`);
+
+  for (const p of lobby.players) {
+    const socketId = playerToSocket.get(`poker:${p.playerId}`);
     if (!socketId) continue;
-    const clientState = unoGame.getClientState(lobbyCode, player.playerId);
-    io.to(socketId).emit('unoState', clientState);
-    io.to(socketId).emit('gameState', clientState);
+    io.to(socketId).emit(
+      'gameState',
+      pokerGame.getClientState(code, p.playerId),
+    );
   }
 }
 
-/* ── Utility parsers ───────────────────────────────────────────── */
-function parseGameType(raw: any): GameType | null {
-  const v = raw?.gameType ?? raw?.game ?? raw?.type;
-  if (v === 'poker' || v === 'uno') return v;
-  if (typeof v === 'string') {
-    const s = v.toLowerCase();
-    if (s === 'poker' || s === 'uno') return s as GameType;
+function broadcastUnoState(code: string) {
+  const lobby = unoGame.getLobby(code);
+  if (!lobby) return;
+
+  for (const p of lobby.players) {
+    const socketId = playerToSocket.get(`uno:${p.playerId}`);
+    if (!socketId) continue;
+    io.to(socketId).emit(
+      'gameState',
+      unoGame.getClientState(code, p.playerId),
+    );
   }
-  return null;
 }
 
-function detectGameTypeByLobbyCode(code: string): GameType | null {
-  if (pokerGame.getLobby(code)) return 'poker';
-  if (unoGame.getLobby(code)) return 'uno';
-  return null;
-}
+/* ───────────────── Socket handlers ─────────────────── */
 
-function parseUnoAction(raw: any): UnoPlayerAction | null {
-  if (!raw) return null;
-  const a = raw.action && typeof raw.action === 'object' ? raw.action : raw;
-  const t = a.type ?? a.action;
-  if (t === 'draw') return { type: 'draw' };
-  if (t === 'pass') return { type: 'pass' };
-  if (t === 'play') {
-    const cardId = a.cardId ?? raw.cardId;
-    const chosenColor = a.chosenColor ?? raw.chosenColor;
-    if (typeof cardId !== 'string' || cardId.length === 0) return null;
-    if (chosenColor && !['red', 'green', 'blue', 'yellow'].includes(String(chosenColor))) return null;
-    return { type: 'play', cardId, chosenColor };
-  }
-  return null;
-}
-
-/* ── Socket handlers ───────────────────────────────────────────── */
-function registerHandlers(nsp: ReturnType<Server['of']> | Server): void {
+function registerHandlers(nsp: Server | ReturnType<Server['of']>) {
   nsp.on('connection', (socket) => {
     const user: AuthUser = socket.data.user;
-    console.log(`✅ Client connected: ${socket.id} user=${user.id} (${user.nickname})`);
-    socket.emit('test', { message: 'Backend works!', timestamp: Date.now() });
 
-    const handleCreateLobby = (data: any, callback: any) => {
-      // Only hosts can create lobbies
-      if (user.role !== 'host') {
-        return callback({ success: false, error: 'Only hosts can create lobbies' });
-      }
-
-      const gameType = parseGameType(data) || 'poker';
-
-      if (gameType === 'uno') {
-        const lobbyCode = unoGame.createLobby(user.id);
-        const joinResult = unoGame.joinLobby(lobbyCode, user.id, user.nickname, user.avatarUrl);
-        if (!joinResult.success) return callback({ success: false, error: joinResult.error });
-
-        socket.join(lobbyCode);
-        socketToPlayer.set(socket.id, { odotpid: user.id, lobbyCode, gameType });
-        playerToSocket.set(`uno:${user.id}`, socket.id);
-
-        const state = unoGame.getClientState(lobbyCode, user.id);
-        callback({ success: true, code: lobbyCode, gameState: state });
-        broadcastUnoState(lobbyCode);
-        return;
-      }
-
-      const lobbyCode = pokerGame.createLobby(user.id);
-      const joinResult = pokerGame.joinLobby(lobbyCode, user.id, user.nickname, user.avatarUrl);
-
-      if (!joinResult.success) return callback({ success: false, error: joinResult.error });
-
-      socket.join(lobbyCode);
-      socketToPlayer.set(socket.id, { odotpid: user.id, lobbyCode, gameType: 'poker' });
-      playerToSocket.set(`poker:${user.id}`, socket.id);
-
-      const state = pokerGame.getClientState(lobbyCode, user.id);
-      callback({ success: true, code: lobbyCode, gameState: state });
-    };
-
-    const handleJoinLobby = (data: any, callback: any) => {
-      const code: string = data?.code ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(code) || 'poker';
-
-      if (gameType === 'uno') {
-        const result = unoGame.joinLobby(code, user.id, user.nickname, user.avatarUrl);
-        if (!result.success) return callback({ success: false, error: result.error });
-
-        socket.join(code);
-        socketToPlayer.set(socket.id, { odotpid: user.id, lobbyCode: code, gameType });
-        playerToSocket.set(`uno:${user.id}`, socket.id);
-
-        const state = unoGame.getClientState(code, user.id);
-        callback({ success: true, gameState: state });
-        broadcastUnoState(code);
-        return;
-      }
-
-      const result = pokerGame.joinLobby(code, user.id, user.nickname, user.avatarUrl);
-      if (!result.success) return callback({ success: false, error: result.error });
-
-      socket.join(code);
-      socketToPlayer.set(socket.id, { odotpid: user.id, lobbyCode: code, gameType: 'poker' });
-      playerToSocket.set(`poker:${user.id}`, socket.id);
-
-      const state = pokerGame.getClientState(code, user.id);
-      callback({ success: true, gameState: state });
-      broadcastGameState(code);
-    };
-
-    const handleLeaveLobby = (data: any, callback?: any) => {
-      const lobbyCode: string = data?.lobbyCode ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(lobbyCode) || 'poker';
-
-      if (gameType === 'uno') {
-        unoGame.leaveLobby(lobbyCode, user.id);
-        socket.leave(lobbyCode);
-        socketToPlayer.delete(socket.id);
-        playerToSocket.delete(`uno:${user.id}`);
-        broadcastUnoState(lobbyCode);
-        callback?.({ success: true });
-        return;
-      }
-
-      pokerGame.leaveLobby(lobbyCode, user.id);
-      socket.leave(lobbyCode);
-      socketToPlayer.delete(socket.id);
-      playerToSocket.delete(`poker:${user.id}`);
-      broadcastGameState(lobbyCode);
-      callback?.({ success: true });
-    };
-
-    const handleStartGame = (data: any, callback: any) => {
-      const lobbyCode: string = data?.lobbyCode ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(lobbyCode) || 'poker';
-
-      if (gameType === 'uno') {
-        const result = unoGame.startGame(lobbyCode, user.id);
-        callback(result);
-        if (result.success) broadcastUnoState(lobbyCode);
-        return;
-      }
-
-      const result = pokerGame.startGame(lobbyCode, user.id);
-      callback(result);
-      if (result.success) broadcastGameState(lobbyCode);
-    };
-
-    const handlePlayerAction = (data: any, callback: any) => {
-      const lobbyCode: string = data?.lobbyCode ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(lobbyCode) || 'poker';
-
-      if (gameType === 'uno') {
-        const action = parseUnoAction(data);
-        if (!action) return callback({ success: false, error: 'Invalid UNO action' });
-        const result = unoGame.handleAction(lobbyCode, user.id, action);
-        callback(result);
-        return;
-      }
-
-      const { action, amount } = data as { action: PlayerAction; amount?: number };
-      const result = pokerGame.handleAction(lobbyCode, user.id, action, amount);
-      callback(result);
-    };
-
-    const handleRequestState = (data: any, callback: any) => {
-      const lobbyCode: string = data?.lobbyCode ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(lobbyCode) || 'poker';
-
-      if (gameType === 'uno') {
-        const state = unoGame.getClientState(lobbyCode, user.id);
-        callback({ success: !!state, gameState: state });
-        return;
-      }
-
-      const state = pokerGame.getClientState(lobbyCode, user.id);
-      callback({ success: !!state, gameState: state });
-    };
-
-    const handleEndLobby = (data: any, callback: any) => {
-      const lobbyCode: string = data?.lobbyCode ?? '';
-      const gameType = parseGameType(data) || detectGameTypeByLobbyCode(lobbyCode) || 'poker';
-
-      if (gameType === 'uno') {
-        const result = unoGame.endLobby(lobbyCode, user.id);
-        if (result.success) io.to(lobbyCode).emit('lobbyEnded');
-        callback(result);
-        return;
-      }
-
-      const result = pokerGame.endLobby(lobbyCode, user.id);
-      if (result.success) io.to(lobbyCode).emit('lobbyEnded');
-      callback(result);
-    };
-
-    socket.on('createLobby', handleCreateLobby);
-    socket.on('joinLobby', handleJoinLobby);
-    socket.on('leaveLobby', handleLeaveLobby);
-    socket.on('startGame', handleStartGame);
-    socket.on('playerAction', handlePlayerAction);
-    socket.on('requestState', handleRequestState);
-    socket.on('endLobby', handleEndLobby);
-
-    // UNO aliases
-    socket.on('uno:createLobby', (d: any, cb: any) => handleCreateLobby({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:joinLobby', (d: any, cb: any) => handleJoinLobby({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:leaveLobby', (d: any, cb: any) => handleLeaveLobby({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:startGame', (d: any, cb: any) => handleStartGame({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:playerAction', (d: any, cb: any) => handlePlayerAction({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:requestState', (d: any, cb: any) => handleRequestState({ ...d, gameType: 'uno' }, cb));
-    socket.on('uno:endLobby', (d: any, cb: any) => handleEndLobby({ ...d, gameType: 'uno' }, cb));
+    socket.emit('test', {
+      message: 'Backend works',
+      userId: user.id,
+    });
 
     socket.on('disconnect', () => {
-      console.log(`Client disconnected: ${socket.id}`);
-      const playerInfo = socketToPlayer.get(socket.id);
-      if (playerInfo) {
-        const { odotpid, lobbyCode, gameType } = playerInfo;
-        if (gameType === 'uno') {
-          unoGame.leaveLobby(lobbyCode, odotpid);
-          socketToPlayer.delete(socket.id);
-          playerToSocket.delete(`uno:${odotpid}`);
-          broadcastUnoState(lobbyCode);
-          return;
-        }
-        pokerGame.leaveLobby(lobbyCode, odotpid);
-        socketToPlayer.delete(socket.id);
-        playerToSocket.delete(`poker:${odotpid}`);
+      const info = socketToPlayer.get(socket.id);
+      if (!info) return;
+
+      const { userId, lobbyCode, gameType } = info;
+      socketToPlayer.delete(socket.id);
+      playerToSocket.delete(`${gameType}:${userId}`);
+
+      if (gameType === 'uno') {
+        unoGame.leaveLobby(lobbyCode, userId);
+        broadcastUnoState(lobbyCode);
+      } else {
+        pokerGame.leaveLobby(lobbyCode, userId);
         broadcastGameState(lobbyCode);
       }
     });
@@ -389,26 +185,21 @@ registerHandlers(io);
 registerHandlers(io.of('/uno'));
 registerHandlers(io.of('/poker'));
 
-// Health check endpoint
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+/* ───────────────────── Start ───────────────────────── */
 
-/* ── Start server ──────────────────────────────────────────────── */
 const PORT = process.env.PORT || 3001;
 
-async function boot(): Promise<void> {
+async function boot() {
   try {
     await runMigrations();
-    console.log('Database ready.');
-  } catch (err) {
-    console.error('Migration failed:', err);
+    console.log('Database ready');
+    httpServer.listen(PORT, () =>
+      console.log(`🚀 Server running on ${PORT}`),
+    );
+  } catch (e) {
+    console.error('Migration failed:', e);
     process.exit(1);
   }
-
-  httpServer.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
 }
 
 boot();
