@@ -109,7 +109,7 @@ export async function verifyToken(token: string): Promise<AuthUser | null> {
 const router = Router();
 
 // ── POST /auth/register ────────────────────────────────────────
-router.post('/auth/register', async (req: Request, res: Response) => {
+router.post('/register', async (req: Request, res: Response) => {
   try {
     const { email, password, nickname } = req.body ?? {};
 
@@ -161,7 +161,7 @@ router.post('/auth/register', async (req: Request, res: Response) => {
 });
 
 // ── POST /auth/login ───────────────────────────────────────────
-router.post('/auth/login', async (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body ?? {};
 
@@ -203,7 +203,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
 });
 
 // ── POST /auth/logout ──────────────────────────────────────────
-router.post('/auth/logout', authMiddleware, async (req: Request, res: Response) => {
+router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
   try {
     const token = req.headers.authorization!.slice(7);
     await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
@@ -284,3 +284,4 @@ router.patch('/me', authMiddleware, async (req: Request, res: Response) => {
 });
 
 export default router;
+
