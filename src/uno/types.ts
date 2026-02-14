@@ -60,6 +60,10 @@ export interface UnoGameState {
   lobbyCode: string;
   hostId: string;
   players: UnoPlayer[];
+  /** Public rooms are persistent and can be joined by anyone */
+  isPublic?: boolean;
+  /** Max players (used for public room listing / join guards) */
+  maxPlayers?: number;
 
   phase: UnoPhase;
   gameStarted: boolean;
@@ -83,6 +87,8 @@ export interface UnoGameState {
   unoPrompt: UnoPrompt | null;
 
   winnerId: string | null;
+  /** Server-driven win celebration (emitted once, also included in state for resync) */
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
 
   /** Whether reward has been issued for this game (prevent duplicate +5 coins) */
   rewardIssued: boolean;
@@ -111,6 +117,9 @@ export interface UnoClientState {
   lobbyCode: string;
   hostId: string;
   players: UnoClientPlayer[];
+  isPublic?: boolean;
+  maxPlayers?: number;
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
 
   phase: UnoPhase;
   gameStarted: boolean;
