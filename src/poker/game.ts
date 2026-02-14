@@ -97,6 +97,9 @@ export class PokerGame {
       hostId: hostIdArg,
       players: [hostPlayer],
       gameStarted: false,
+      isPublic: false,
+      maxPlayers: 9,
+      celebration: null,
       deck: [],
       communityCards: [],
       pots: [{ amount: 0, eligiblePlayerIds: [] }],
@@ -119,6 +122,43 @@ export class PokerGame {
     };
     this.lobbies.set(code, state);
     this.actionLogs.set(code, []);
+    return code;
+  }
+
+  /** Create a persistent public lobby with a fixed code. */
+  createPublicLobby(code: string): string {
+    const state: GameState = {
+      lobbyCode: code,
+      hostId: 'public',
+      players: [],
+      gameStarted: false,
+      isPublic: true,
+      maxPlayers: 9,
+      celebration: null,
+      deck: [],
+      communityCards: [],
+      pots: [{ amount: 0, eligiblePlayerIds: [] }],
+      currentBet: 0,
+      minRaise: BIG_BLIND,
+      dealerIndex: 0,
+      smallBlindIndex: 0,
+      bigBlindIndex: 1,
+      currentPlayerIndex: 0,
+      street: 'preflop',
+      smallBlind: SMALL_BLIND,
+      bigBlind: BIG_BLIND,
+      turnStartTime: null,
+      turnTimeout: TURN_TIMEOUT,
+      handNumber: 0,
+      lastRaiseAmount: BIG_BLIND,
+      actedThisRound: new Set(),
+      version: 1,
+      rewardIssued: false,
+    };
+    this.lobbies.set(code, state);
+    this.actionLogs.set(code, []);
+    this.showdownResults.delete(code);
+    this.clearLobbyTimer(code);
     return code;
   }
   
@@ -153,7 +193,8 @@ export class PokerGame {
       return { success: false, error: 'Game already in progress' };
     }
     
-    if (lobby.players.length >= 9) {
+    const maxPlayers = lobby.maxPlayers ?? 9;
+    if (lobby.players.length >= maxPlayers) {
       return { success: false, error: 'Lobby is full' };
     }
     
@@ -164,6 +205,8 @@ export class PokerGame {
       existing.avatarUrl = avatarUrl;
       existing.equippedBorder = equippedBorder ?? null;
       existing.equippedEffect = equippedEffect ?? null;
+      // IMPORTANT: bump version so frontend doesn't ignore the update as stale
+      lobby.version = (lobby.version || 0) + 1;
       return { success: true };
     }
     
@@ -186,6 +229,8 @@ export class PokerGame {
     };
     
     lobby.players.push(player);
+    // IMPORTANT: bump version so frontend doesn't ignore the update as stale
+    lobby.version = (lobby.version || 0) + 1;
     return { success: true };
   }
   
@@ -209,14 +254,32 @@ export class PokerGame {
         }
       }
     }
+    // Version bump for lobby composition changes
+    lobby.version = (lobby.version || 0) + 1;
     
     // Remove lobby if empty
-    if (lobby.players.length === 0 || 
-        lobby.players.every(p => !p.isConnected)) {
-      this.clearLobbyTimer(code);
-      this.lobbies.delete(code);
-      this.actionLogs.delete(code);
-      this.showdownResults.delete(code);
+    if (lobby.players.length === 0 || lobby.players.every(p => !p.isConnected)) {
+      if (lobby.isPublic) {
+        // Public rooms never die; reset to lobby state
+        lobby.players = [];
+        lobby.gameStarted = false;
+        lobby.street = 'preflop';
+        lobby.communityCards = [];
+        lobby.pots = [{ amount: 0, eligiblePlayerIds: [] }];
+        lobby.currentBet = 0;
+        lobby.currentPlayerIndex = 0;
+        lobby.handNumber = 0;
+        lobby.rewardIssued = false;
+        lobby.celebration = null;
+        this.actionLogs.set(code, []);
+        this.showdownResults.delete(code);
+        this.clearLobbyTimer(code);
+      } else {
+        this.clearLobbyTimer(code);
+        this.lobbies.delete(code);
+        this.actionLogs.delete(code);
+        this.showdownResults.delete(code);
+      }
     }
   }
   
@@ -226,7 +289,7 @@ export class PokerGame {
       return { success: false, error: 'Lobby not found' };
     }
     
-    if (lobby.hostId !== requesterId) {
+    if (!lobby.isPublic && lobby.hostId !== requesterId) {
       return { success: false, error: 'Only host can start the game' };
     }
     
@@ -236,6 +299,7 @@ export class PokerGame {
     }
     
     lobby.gameStarted = true;
+    lobby.celebration = null;
     this.startNewHand(code);
     
     return { success: true };
@@ -266,6 +330,7 @@ export class PokerGame {
     lobby.lastRaiseAmount = BIG_BLIND;
     lobby.actedThisRound = new Set();
     lobby.rewardIssued = false;
+    lobby.celebration = null;
     
     // Clear previous showdown
     this.showdownResults.delete(code);
@@ -631,6 +696,23 @@ export class PokerGame {
     this.awardPot(code, winnerIds, results);
     
     this.showdownResults.set(code, results);
+
+    // ── Server-driven win celebration (used by all clients) ──
+    if (winnerIds.length > 0) {
+      const winner = lobby.players.find(p => p.playerId === winnerIds[0]);
+      const equipped = winner?.equippedEffect ?? null;
+      const effectId =
+        equipped === 'effect_red_hearts' ? 'red_hearts'
+        : equipped === 'effect_black_hearts' ? 'black_hearts'
+        : 'stars';
+      lobby.celebration = {
+        id: `poker_${code}_hand_${lobby.handNumber}`,
+        winnerId: winnerIds[0],
+        effectId,
+        createdAt: Date.now(),
+      };
+    }
+
     this.broadcastState(code);
     
     // Start new hand after delay
@@ -765,6 +847,9 @@ export class PokerGame {
       hostId: lobby.hostId,
       players: clientPlayers,
       gameStarted: lobby.gameStarted,
+      isPublic: lobby.isPublic ?? false,
+      maxPlayers: lobby.maxPlayers ?? 9,
+      celebration: lobby.celebration ?? null,
       communityCards: lobby.communityCards,
       pot: totalPot,
       currentBet: lobby.currentBet,
@@ -794,6 +879,10 @@ export class PokerGame {
       return { success: false, error: 'Lobby not found' };
     }
     
+    if (lobby.isPublic) {
+      return { success: false, error: 'Public rooms cannot be ended' };
+    }
+
     if (lobby.hostId !== requesterId) {
       return { success: false, error: 'Only host can end the lobby' };
     }
