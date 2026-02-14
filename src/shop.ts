@@ -25,6 +25,8 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'effect_sparkle',  name: 'Sparkle',         type: 'effect', price: 50, description: 'Sparkling particles around your avatar.',         cssClass: 'cosmetic-effect--sparkle' },
   { id: 'effect_shadow',   name: 'Dark Aura',       type: 'effect', price: 50, description: 'A mysterious dark aura effect.',                  cssClass: 'cosmetic-effect--shadow' },
   { id: 'effect_pulse',    name: 'Pulse',           type: 'effect', price: 50, description: 'Rhythmic pulsing animation.',                     cssClass: 'cosmetic-effect--pulse' },
+  { id: 'effect_red_hearts',   name: 'Red Hearts',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.',      cssClass: 'cosmetic-effect--hearts-red' },
+  { id: 'effect_black_hearts', name: 'Black Hearts',   type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.',    cssClass: 'cosmetic-effect--hearts-black' },
 ];
 
 const ITEMS_MAP = new Map(SHOP_ITEMS.map(i => [i.id, i]));
