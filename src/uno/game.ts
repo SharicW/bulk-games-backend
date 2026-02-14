@@ -178,6 +178,8 @@ export class UnoGame {
       lobbyCode: code,
       hostId: hostIdArg,
       players: [hostPlayer],
+      isPublic: false,
+      maxPlayers: 10,
 
       phase: 'lobby',
       gameStarted: false,
@@ -197,6 +199,49 @@ export class UnoGame {
       unoPrompt: null,
 
       winnerId: null,
+      celebration: null,
+      rewardIssued: false,
+
+      actionLog: [],
+
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+
+    this.lobbies.set(code, state);
+    return code;
+  }
+
+  /** Create a persistent public lobby with a fixed code. */
+  createPublicLobby(code: string): string {
+    const now = Date.now();
+    const state: UnoGameState = {
+      lobbyCode: code,
+      hostId: 'public',
+      players: [],
+      isPublic: true,
+      maxPlayers: 10,
+
+      phase: 'lobby',
+      gameStarted: false,
+
+      dealerIndex: 0,
+      direction: 1,
+      currentPlayerIndex: 0,
+
+      hands: {},
+      drawPile: [],
+      discardPile: [],
+
+      currentColor: null,
+      pendingDraw: 0,
+      drawnPlayable: null,
+      mustCallUno: null,
+      unoPrompt: null,
+
+      winnerId: null,
+      celebration: null,
       rewardIssued: false,
 
       actionLog: [],
@@ -240,7 +285,13 @@ export class UnoGame {
       return { success: true };
     }
 
-    if (lobby.players.length >= 10) return { success: false, error: 'Lobby is full' };
+    // Disallow mid-game joins, except reconnect
+    if (lobby.phase !== 'lobby' || lobby.gameStarted) {
+      return { success: false, error: 'Game already in progress' };
+    }
+
+    const maxPlayers = lobby.maxPlayers ?? 10;
+    if (lobby.players.length >= maxPlayers) return { success: false, error: 'Lobby is full' };
 
     const seatIndex = lobby.players.length;
     const player: UnoPlayer = {
@@ -287,13 +338,41 @@ export class UnoGame {
     const l2 = this.lobbies.get(code);
     if (!l2) return;
     if (l2.players.length === 0 || l2.players.every((pl) => !pl.isConnected)) {
-      this.lobbies.delete(code);
+      if (l2.isPublic) {
+        // Public rooms never die; reset to lobby state
+        const now = Date.now();
+        const reset: UnoGameState = {
+          ...l2,
+          hostId: 'public',
+          players: [],
+          phase: 'lobby',
+          gameStarted: false,
+          hands: {},
+          drawPile: [],
+          discardPile: [],
+          currentColor: null,
+          pendingDraw: 0,
+          drawnPlayable: null,
+          mustCallUno: null,
+          unoPrompt: null,
+          winnerId: null,
+          celebration: null,
+          rewardIssued: false,
+          actionLog: [],
+          updatedAt: now,
+          version: (l2.version || 0) + 1,
+        };
+        this.lobbies.set(code, reset);
+      } else {
+        this.lobbies.delete(code);
+      }
     }
   }
 
   endLobby(code: string, requesterId: string): { success: boolean; error?: string } {
     const lobby = this.lobbies.get(code);
     if (!lobby) return { success: false, error: 'Lobby not found' };
+    if (lobby.isPublic) return { success: false, error: 'Public rooms cannot be ended' };
     if (lobby.hostId !== requesterId) return { success: false, error: 'Only host can end the lobby' };
     this.lobbies.delete(code);
     return { success: true };
@@ -302,7 +381,7 @@ export class UnoGame {
   startGame(code: string, requesterId: string): { success: boolean; error?: string } {
     const lobby = this.lobbies.get(code);
     if (!lobby) return { success: false, error: 'Lobby not found' };
-    if (lobby.hostId !== requesterId) return { success: false, error: 'Only host can start the game' };
+    if (!lobby.isPublic && lobby.hostId !== requesterId) return { success: false, error: 'Only host can start the game' };
 
     const activePlayers = lobby.players.filter((p) => p.isConnected);
     if (activePlayers.length < 2) return { success: false, error: 'Need at least 2 players' };
@@ -320,6 +399,7 @@ export class UnoGame {
       currentColor: null,
       direction: 1,
       winnerId: null,
+      celebration: null,
       pendingDraw: 0,
       drawnPlayable: null,
       mustCallUno: null,
@@ -501,6 +581,9 @@ export class UnoGame {
       lobbyCode: lobby.lobbyCode,
       hostId: lobby.hostId,
       players,
+      isPublic: lobby.isPublic ?? false,
+      maxPlayers: lobby.maxPlayers ?? 10,
+      celebration: lobby.celebration ?? null,
 
       phase: lobby.phase,
       gameStarted: lobby.gameStarted,
@@ -719,7 +802,22 @@ export class UnoGame {
     }
 
     if (afterCount === 0) {
-      next = { ...next, phase: 'finished', winnerId: pid };
+      const equipped = next.players[next.currentPlayerIndex]?.equippedEffect ?? null;
+      const effectId =
+        equipped === 'effect_red_hearts' ? 'red_hearts'
+        : equipped === 'effect_black_hearts' ? 'black_hearts'
+        : 'stars';
+      next = {
+        ...next,
+        phase: 'finished',
+        winnerId: pid,
+        celebration: {
+          id: `uno_${code}_${Date.now()}`,
+          winnerId: pid,
+          effectId,
+          createdAt: Date.now(),
+        },
+      };
       next = addLog(next, { type: 'winner', playerId: pid, text: `${player.nickname} wins!` });
       return { success: true, state: next };
     }
