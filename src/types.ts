@@ -37,6 +37,12 @@ export interface GameState {
   hostId: string;
   players: Player[];
   gameStarted: boolean;
+  /** Public rooms are persistent and can be joined by anyone */
+  isPublic?: boolean;
+  /** Max players (used for public room listing / join guards) */
+  maxPlayers?: number;
+  /** Server-driven win celebration (emitted once, also included in state for resync) */
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
   deck: Card[];
   communityCards: Card[];
   pots: Pot[];
@@ -77,6 +83,9 @@ export interface ClientGameState {
   hostId: string;
   players: ClientPlayer[];
   gameStarted: boolean;
+  isPublic?: boolean;
+  maxPlayers?: number;
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
   communityCards: Card[];
   pot: number;
   currentBet: number;
