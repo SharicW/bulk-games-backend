@@ -388,7 +388,7 @@ export class UnoGame {
     if (lobby.phase !== 'lobby') return { success: false, error: 'Game already started' };
 
     const faces = makeDeckFaces();
-    const deck = shuffle(instantiateDeck(faces, `uno_${code}`));
+    const deck = shuffle(instantiateDeck(faces, `uno_${lobby.lobbyCode}`));
 
     let temp: UnoGameState = {
       ...lobby,
@@ -812,7 +812,7 @@ export class UnoGame {
         phase: 'finished',
         winnerId: pid,
         celebration: {
-          id: `uno_${code}_${Date.now()}`,
+          id: `uno_${lobby.lobbyCode}_${Date.now()}`,
           winnerId: pid,
           effectId,
           createdAt: Date.now(),
