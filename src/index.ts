@@ -13,6 +13,8 @@ import shopRouter from './shop.js';
 import pool from './db.js';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
+const logInfo = (...args: any[]) => console.log(...args);
+const logWarn = (...args: any[]) => console.warn(...args);
 
 const app = express();
 const httpServer = createServer(app);
@@ -107,10 +109,16 @@ const unoNsp = io.of('/uno');
 
 async function socketAuth(socket: Socket, next: (err?: Error) => void): Promise<void> {
   const token: string | undefined = socket.handshake.auth?.token;
-  if (!token) return next(new Error('Authentication required'));
+  if (!token) {
+    logWarn(`[socketAuth] missing token nsp=${socket.nsp.name} socketId=${socket.id}`);
+    return next(new Error('Authentication required'));
+  }
 
   const user = await verifyToken(token);
-  if (!user) return next(new Error('Invalid token'));
+  if (!user) {
+    logWarn(`[socketAuth] invalid token nsp=${socket.nsp.name} socketId=${socket.id}`);
+    return next(new Error('Invalid token'));
+  }
 
   socket.data.user = user;
   next();
@@ -145,11 +153,18 @@ const POKER_PUBLIC_CODES = ['POKER_PUBLIC_1', 'POKER_PUBLIC_2', 'POKER_PUBLIC_3'
 const UNO_PUBLIC_CODES = ['UNO_PUBLIC_1', 'UNO_PUBLIC_2', 'UNO_PUBLIC_3'] as const;
 
 for (const code of POKER_PUBLIC_CODES) {
-  if (!pokerGame.getLobby(code)) pokerGame.createPublicLobby(code);
+  if (!pokerGame.getLobby(code)) {
+    pokerGame.createPublicLobby(code);
+    logInfo(`[publicRooms] created poker ${code}`);
+  }
 }
 for (const code of UNO_PUBLIC_CODES) {
-  if (!unoGame.getLobby(code)) unoGame.createPublicLobby(code);
+  if (!unoGame.getLobby(code)) {
+    unoGame.createPublicLobby(code);
+    logInfo(`[publicRooms] created uno ${code}`);
+  }
 }
+logInfo(`[publicRooms] ready poker=${POKER_PUBLIC_CODES.join(',')} uno=${UNO_PUBLIC_CODES.join(',')}`);
 
 function roomName(gameType: GameType, code: string) {
   return `${gameType}:${code}`;
@@ -359,39 +374,50 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         return;
       }
 
+      // Minimal prod-safe join logs (helps debug Railway issues)
+      logInfo(`[joinLobby:req] nsp=${nsp.name} gameType=${gameType} code=${code} userId=${user.id}`);
+
       const cosmetics = await fetchUserCosmetics(user.id);
 
       if (gameType === 'uno') {
         const res = unoGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
         if (!res.success) {
+          logWarn(`[joinLobby:reject] gameType=uno code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
           ack?.(res);
           return;
         }
 
-        if (IS_DEV) console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('uno', user.id)})`);
+        const wasReconnect = cancelDisconnectTimer('uno', user.id);
+        if (IS_DEV) console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
         socket.join(roomName('uno', code));
         socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
         playerToSocket.set(`uno:${user.id}`, socket.id);
 
         ack?.({ success: true, gameState: unoGame.getClientState(code, user.id) });
         broadcastUnoState(code);
+        const l = unoGame.getLobby(code);
+        logInfo(`[joinLobby:ok] gameType=uno code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0}`);
         return;
       }
 
       /* Poker */
       const res = pokerGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
       if (!res.success) {
+        logWarn(`[joinLobby:reject] gameType=poker code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
         ack?.({ success: false, error: res.error || 'Lobby not found or full' });
         return;
       }
 
-      if (IS_DEV) console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('poker', user.id)})`);
+      const wasReconnect = cancelDisconnectTimer('poker', user.id);
+      if (IS_DEV) console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
       socket.join(roomName('poker', code));
       socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
       playerToSocket.set(`poker:${user.id}`, socket.id);
 
       ack?.({ success: true, gameState: pokerGame.getClientState(code, user.id) });
       broadcastPokerState(code);
+      const l = pokerGame.getLobby(code);
+      logInfo(`[joinLobby:ok] gameType=poker code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0}`);
     });
 
     /* ── startGame ───────────────────────────────────────── */
