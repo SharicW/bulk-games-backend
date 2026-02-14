@@ -12,6 +12,8 @@ import authRouter, { verifyToken, type AuthUser } from './auth.js';
 import shopRouter from './shop.js';
 import pool from './db.js';
 
+const IS_DEV = process.env.NODE_ENV !== 'production';
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -138,6 +140,17 @@ const unoGame = new UnoGame(
   (code) => !!pokerGame.getLobby(code),
 );
 
+// ── Persistent public rooms (always available) ─────────────────────────
+const POKER_PUBLIC_CODES = ['POKER_PUBLIC_1', 'POKER_PUBLIC_2', 'POKER_PUBLIC_3'] as const;
+const UNO_PUBLIC_CODES = ['UNO_PUBLIC_1', 'UNO_PUBLIC_2', 'UNO_PUBLIC_3'] as const;
+
+for (const code of POKER_PUBLIC_CODES) {
+  if (!pokerGame.getLobby(code)) pokerGame.createPublicLobby(code);
+}
+for (const code of UNO_PUBLIC_CODES) {
+  if (!unoGame.getLobby(code)) unoGame.createPublicLobby(code);
+}
+
 function roomName(gameType: GameType, code: string) {
   return `${gameType}:${code}`;
 }
@@ -172,7 +185,10 @@ async function broadcastPokerState(code: string) {
     }
   }
 
-  console.log(`[broadcast:poker] ${code} → ${lobby.players.length} players`);
+  if (IS_DEV) console.log(`[broadcast:poker] ${code} → ${lobby.players.length} players v${lobby.version ?? 0}`);
+
+  // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
+  maybeEmitCelebration('poker', code, lobby.celebration ?? null);
 
   for (const p of lobby.players) {
     const socketId = playerToSocket.get(`poker:${p.playerId}`);
@@ -202,7 +218,10 @@ async function broadcastUnoState(code: string) {
     }
   }
 
-  console.log(`[broadcast:uno] ${code} → ${lobby.players.length} players`);
+  if (IS_DEV) console.log(`[broadcast:uno] ${code} → ${lobby.players.length} players v${lobby.version ?? 0}`);
+
+  // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
+  maybeEmitCelebration('uno', code, lobby.celebration ?? null);
 
   for (const p of lobby.players) {
     const socketId = playerToSocket.get(`uno:${p.playerId}`);
@@ -213,6 +232,64 @@ async function broadcastUnoState(code: string) {
     }
   }
 }
+
+// ── Celebration dedupe emitter ─────────────────────────────────────────
+const lastCelebrationEmitted = new Map<string, string>(); // key: `${gameType}:${code}` → celebrationId
+function maybeEmitCelebration(
+  gameType: GameType,
+  code: string,
+  celebration: null | { id: string; winnerId: string; effectId: string; createdAt: number },
+) {
+  if (!celebration?.id) return;
+  const key = `${gameType}:${code}`;
+  if (lastCelebrationEmitted.get(key) === celebration.id) return;
+  lastCelebrationEmitted.set(key, celebration.id);
+
+  const payload = { winnerId: celebration.winnerId, effectId: celebration.effectId, id: celebration.id };
+  if (IS_DEV) console.log(`[celebration:${gameType}] code=${code} winner=${payload.winnerId} effect=${payload.effectId} id=${payload.id}`);
+
+  if (gameType === 'poker') pokerNsp.in(roomName('poker', code)).emit('game:celebration', payload);
+  else unoNsp.in(roomName('uno', code)).emit('game:celebration', payload);
+}
+
+// ── Public rooms listing (HTTP + socket) ───────────────────────────────
+function listPublicRooms(gameType?: GameType) {
+  const out: any[] = [];
+  if (!gameType || gameType === 'poker') {
+    for (const code of POKER_PUBLIC_CODES) {
+      const l = pokerGame.getLobby(code);
+      out.push({
+        gameType: 'poker',
+        code,
+        playerCount: l ? l.players.filter(p => p.isConnected).length : 0,
+        status: l?.gameStarted ? 'in_game' : 'lobby',
+        maxPlayers: l?.maxPlayers ?? 9,
+      });
+    }
+  }
+  if (!gameType || gameType === 'uno') {
+    for (const code of UNO_PUBLIC_CODES) {
+      const l = unoGame.getLobby(code);
+      out.push({
+        gameType: 'uno',
+        code,
+        playerCount: l ? l.players.filter(p => p.isConnected).length : 0,
+        status: l?.gameStarted ? 'in_game' : 'lobby',
+        maxPlayers: l?.maxPlayers ?? 10,
+      });
+    }
+  }
+  return out;
+}
+
+app.get('/public/rooms', (req: Request, res: Response) => {
+  const gt = (req.query.gameType as any) as GameType | undefined;
+  if (gt && gt !== 'poker' && gt !== 'uno') {
+    res.status(400).json({ error: 'Invalid gameType' });
+    return;
+  }
+  res.json({ rooms: listPublicRooms(gt) });
+});
 
 /* ───────────────── Socket handlers ─────────────────── */
 
@@ -226,9 +303,14 @@ function inferGameType(nspName: string, payload?: any): GameType {
 function attachHandlers(nsp: ReturnType<Server['of']>) {
   nsp.on('connection', (socket) => {
     const user: AuthUser = socket.data.user;
-    console.log(`[connect] ${nsp.name} userId=${user.id} socketId=${socket.id} role=${user.role}`);
+    if (IS_DEV) console.log(`[connect] ${nsp.name} userId=${user.id} socketId=${socket.id} role=${user.role}`);
 
     socket.emit('test', { message: 'Backend works', userId: user.id });
+
+    socket.on('listPublicRooms', (payload: any, ack?: (r: any) => void) => {
+      const gameType = payload?.gameType as GameType | undefined;
+      ack?.({ success: true, rooms: listPublicRooms(gameType) });
+    });
 
     /* ── createLobby ─────────────────────────────────────── */
 
@@ -244,7 +326,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
       if (gameType === 'uno') {
         const code = unoGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-        console.log(`[createLobby:uno] code=${code} hostId=${user.id}`);
+      if (IS_DEV) console.log(`[createLobby:uno] code=${code} hostId=${user.id}`);
         socket.join(roomName('uno', code));
         socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
         playerToSocket.set(`uno:${user.id}`, socket.id);
@@ -256,7 +338,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
       }
 
       const code = pokerGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-      console.log(`[createLobby:poker] code=${code} hostId=${user.id}`);
+      if (IS_DEV) console.log(`[createLobby:poker] code=${code} hostId=${user.id}`);
       socket.join(roomName('poker', code));
       socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
       playerToSocket.set(`poker:${user.id}`, socket.id);
@@ -286,7 +368,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
           return;
         }
 
-        console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('uno', user.id)})`);
+        if (IS_DEV) console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('uno', user.id)})`);
         socket.join(roomName('uno', code));
         socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
         playerToSocket.set(`uno:${user.id}`, socket.id);
@@ -303,7 +385,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         return;
       }
 
-      console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('poker', user.id)})`);
+      if (IS_DEV) console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!cancelDisconnectTimer('poker', user.id)})`);
       socket.join(roomName('poker', code));
       socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
       playerToSocket.set(`poker:${user.id}`, socket.id);
@@ -325,7 +407,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
       if (gameType === 'uno') {
         const res = unoGame.startGame(lobbyCode, user.id);
-        console.log(`[startGame:uno] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
+        if (IS_DEV) console.log(`[startGame:uno] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
         if (!res.success) {
           ack?.({ ...res, accepted: false, reason: res.error });
           return;
@@ -338,7 +420,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
       /* Poker */
       const res = pokerGame.startGame(lobbyCode, user.id);
-      console.log(`[startGame:poker] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
+      if (IS_DEV) console.log(`[startGame:poker] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
       if (!res.success) {
         ack?.({ success: false, accepted: false, reason: res.error || 'Only host can start / not enough players / already started', error: res.error || 'Only host can start / not enough players / already started' });
         return;
@@ -484,7 +566,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         return;
       }
 
-      console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} — starting ${DISCONNECT_GRACE_MS}ms grace`);
+      if (IS_DEV) console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} — starting ${DISCONNECT_GRACE_MS}ms grace`);
 
       /* Mark player as disconnected right away so others see the status */
       if (gameType === 'uno') {
@@ -513,12 +595,12 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         /* Double-check: if the player reconnected in the meantime, skip */
         const nowSocket = playerToSocket.get(mapKey);
         if (nowSocket && nowSocket !== socket.id) {
-          console.log(`[disconnect:grace] ${mapKey} — player reconnected (${nowSocket}), skip leave`);
+          if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} — player reconnected (${nowSocket}), skip leave`);
           return;
         }
 
         playerToSocket.delete(mapKey);
-        console.log(`[disconnect:grace] ${mapKey} — grace expired, executing leaveLobby`);
+        if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} — grace expired, executing leaveLobby`);
 
         if (gameType === 'uno') {
           unoGame.leaveLobby(lobbyCode, userId);
@@ -544,7 +626,7 @@ function cancelDisconnectTimer(gameType: GameType, userId: string): boolean {
   if (timer) {
     clearTimeout(timer);
     disconnectTimers.delete(key);
-    console.log(`[reconnect] cancelled disconnect timer for ${key}`);
+    if (IS_DEV) console.log(`[reconnect] cancelled disconnect timer for ${key}`);
     return true;
   }
   return false;
