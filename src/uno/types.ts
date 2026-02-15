@@ -60,6 +60,7 @@ export interface UnoGameState {
   lobbyCode: string;
   hostId: string;
   players: UnoPlayer[];
+  spectators?: UnoPlayer[];
   /** Public rooms are persistent and can be joined by anyone */
   isPublic?: boolean;
   /** Max players (used for public room listing / join guards) */
