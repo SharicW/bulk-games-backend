@@ -178,6 +178,7 @@ export class UnoGame {
       lobbyCode: code,
       hostId: hostIdArg,
       players: [hostPlayer],
+      spectators: [],
       isPublic: false,
       maxPlayers: 10,
 
@@ -220,6 +221,7 @@ export class UnoGame {
       lobbyCode: code,
       hostId: 'public',
       players: [],
+      spectators: [],
       isPublic: true,
       maxPlayers: 10,
 
@@ -272,6 +274,8 @@ export class UnoGame {
 
     const now = Date.now();
     const existing = lobby.players.find((p) => p.playerId === odotpid);
+    const spectators = lobby.spectators || (lobby.spectators = []);
+    const existingSpec = spectators.find((p) => p.playerId === odotpid);
 
     if (existing) {
       existing.isConnected = true;
@@ -285,9 +289,34 @@ export class UnoGame {
       return { success: true };
     }
 
-    // Disallow mid-game joins, except reconnect
+    if (existingSpec) {
+      existingSpec.isConnected = true;
+      existingSpec.lastSeenAt = now;
+      existingSpec.nickname = nickname || existingSpec.nickname;
+      existingSpec.avatarUrl = avatarUrl ?? existingSpec.avatarUrl;
+      existingSpec.equippedBorder = equippedBorder ?? existingSpec.equippedBorder;
+      existingSpec.equippedEffect = equippedEffect ?? existingSpec.equippedEffect;
+      this.bump(code);
+      this.lobbies.set(code, lobby);
+      return { success: true };
+    }
+
+    // In-game join → spectator
     if (lobby.phase !== 'lobby' || lobby.gameStarted) {
-      return { success: false, error: 'Game already in progress' };
+      if (spectators.length >= 30) return { success: false, error: 'Too many spectators' };
+      spectators.push({
+        playerId: odotpid,
+        seatIndex: -1,
+        nickname: nickname || 'Spectator',
+        avatarUrl: avatarUrl || null,
+        isConnected: true,
+        lastSeenAt: now,
+        equippedBorder: equippedBorder ?? null,
+        equippedEffect: equippedEffect ?? null,
+      });
+      const s2 = addLog(lobby, { type: 'joined', playerId: odotpid, text: `${nickname || 'Spectator'} is spectating` });
+      this.lobbies.set(code, this.bumpState(s2));
+      return { success: true };
     }
 
     const maxPlayers = lobby.maxPlayers ?? 10;
@@ -315,6 +344,15 @@ export class UnoGame {
   leaveLobby(code: string, odotpid: string): void {
     const lobby = this.lobbies.get(code);
     if (!lobby) return;
+
+    const spectators = lobby.spectators || [];
+    const si = spectators.findIndex((p) => p.playerId === odotpid);
+    if (si !== -1) {
+      spectators.splice(si, 1);
+      lobby.spectators = spectators;
+      this.lobbies.set(code, this.bumpState(addLog(lobby, { type: 'left', playerId: odotpid, text: `Spectator left` })));
+      return;
+    }
 
     const idx = lobby.players.findIndex((p) => p.playerId === odotpid);
     if (idx === -1) return;
@@ -345,6 +383,7 @@ export class UnoGame {
           ...l2,
           hostId: 'public',
           players: [],
+          spectators: [],
           phase: 'lobby',
           gameStarted: false,
           hands: {},
@@ -383,9 +422,28 @@ export class UnoGame {
     if (!lobby) return { success: false, error: 'Lobby not found' };
     if (!lobby.isPublic && lobby.hostId !== requesterId) return { success: false, error: 'Only host can start the game' };
 
+    if (lobby.phase !== 'lobby' && lobby.phase !== 'finished') return { success: false, error: 'Game already started' };
+
+    const spectators = lobby.spectators || [];
+    if (spectators.length) {
+      const maxPlayers = lobby.maxPlayers ?? 10;
+      const toMove = spectators.filter(s => s.isConnected).slice(0, Math.max(0, maxPlayers - lobby.players.length));
+      if (toMove.length) {
+        const nextPlayers = [...lobby.players];
+        const nextHands = { ...lobby.hands };
+        for (const sp of toMove) {
+          if (nextPlayers.some(p => p.playerId === sp.playerId)) continue;
+          nextPlayers.push({ ...sp, seatIndex: nextPlayers.length });
+          nextHands[sp.playerId] = nextHands[sp.playerId] || [];
+        }
+        lobby.players = nextPlayers;
+        lobby.hands = nextHands;
+        lobby.spectators = spectators.filter(s => !toMove.some(m => m.playerId === s.playerId));
+      }
+    }
+
     const activePlayers = lobby.players.filter((p) => p.isConnected);
     if (activePlayers.length < 2) return { success: false, error: 'Need at least 2 players' };
-    if (lobby.phase !== 'lobby') return { success: false, error: 'Game already started' };
 
     const faces = makeDeckFaces();
     const deck = shuffle(instantiateDeck(faces, `uno_${lobby.lobbyCode}`));
@@ -810,6 +868,7 @@ export class UnoGame {
       next = {
         ...next,
         phase: 'finished',
+        gameStarted: false,
         winnerId: pid,
         celebration: {
           id: `uno_${lobby.lobbyCode}_${Date.now()}`,
