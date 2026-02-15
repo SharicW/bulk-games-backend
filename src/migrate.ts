@@ -70,10 +70,35 @@ CREATE TABLE IF NOT EXISTS user_cosmetics (
 );
 `;
 
+/* ── V3: wins tracking ─────────────────────────────────────────── */
+const V3 = `
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'wins_poker'
+  ) THEN
+    ALTER TABLE users ADD COLUMN wins_poker INT NOT NULL DEFAULT 0;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'wins_uno'
+  ) THEN
+    ALTER TABLE users ADD COLUMN wins_uno INT NOT NULL DEFAULT 0;
+  END IF;
+END $$;
+`;
+
 export async function runMigrations(): Promise<void> {
   console.log('Running database migrations...');
   await pool.query(UP);
   console.log('V1 migrations complete.');
   await pool.query(V2);
   console.log('V2 migrations (coins + cosmetics) complete.');
+  await pool.query(V3);
+  console.log('V3 migrations (wins) complete.');
 }
