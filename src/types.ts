@@ -36,6 +36,7 @@ export interface GameState {
   lobbyCode: string;
   hostId: string;
   players: Player[];
+  spectators?: Player[];
   gameStarted: boolean;
   /** Public rooms are persistent and can be joined by anyone */
   isPublic?: boolean;
