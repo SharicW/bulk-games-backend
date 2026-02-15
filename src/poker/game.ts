@@ -96,6 +96,7 @@ export class PokerGame {
       lobbyCode: code,
       hostId: hostIdArg,
       players: [hostPlayer],
+      spectators: [],
       gameStarted: false,
       isPublic: false,
       maxPlayers: 9,
@@ -131,6 +132,7 @@ export class PokerGame {
       lobbyCode: code,
       hostId: 'public',
       players: [],
+      spectators: [],
       gameStarted: false,
       isPublic: true,
       maxPlayers: 9,
@@ -183,14 +185,40 @@ export class PokerGame {
       return { success: false, error: 'Lobby not found' };
     }
     
+    const spectators = lobby.spectators || (lobby.spectators = []);
     if (lobby.gameStarted) {
-      // Allow reconnection
       const existing = lobby.players.find(p => p.playerId === odotpid);
       if (existing) {
         existing.isConnected = true;
         return { success: true };
       }
-      return { success: false, error: 'Game already in progress' };
+      const spec = spectators.find(p => p.playerId === odotpid);
+      if (spec) {
+        spec.isConnected = true;
+        // IMPORTANT: bump version so frontend doesn't ignore the update as stale
+        lobby.version = (lobby.version || 0) + 1;
+        return { success: true };
+      }
+      if (spectators.length >= 30) return { success: false, error: 'Too many spectators' };
+      spectators.push({
+        playerId: odotpid,
+        seatIndex: -1,
+        nickname,
+        avatarUrl,
+        stack: 0,
+        currentBet: 0,
+        holeCards: [],
+        folded: true,
+        allIn: false,
+        isConnected: true,
+        lastAction: null,
+        lastBet: 0,
+        equippedBorder: equippedBorder ?? null,
+        equippedEffect: equippedEffect ?? null,
+      });
+      lobby.spectators = spectators;
+      lobby.version = (lobby.version || 0) + 1;
+      return { success: true };
     }
     
     const maxPlayers = lobby.maxPlayers ?? 9;
@@ -237,6 +265,15 @@ export class PokerGame {
   leaveLobby(code: string, odotpid: string): void {
     const lobby = this.lobbies.get(code);
     if (!lobby) return;
+
+    const spectators = lobby.spectators || [];
+    const si = spectators.findIndex(p => p.playerId === odotpid);
+    if (si !== -1) {
+      spectators.splice(si, 1);
+      lobby.spectators = spectators;
+      lobby.version = (lobby.version || 0) + 1;
+      return;
+    }
     
     const player = lobby.players.find(p => p.playerId === odotpid);
     if (player) {
@@ -293,9 +330,42 @@ export class PokerGame {
       return { success: false, error: 'Only host can start the game' };
     }
     
+    const spectators = lobby.spectators || (lobby.spectators = []);
+    if (spectators.length) {
+      const maxPlayers = lobby.maxPlayers ?? 9;
+      const canAdd = Math.max(0, maxPlayers - lobby.players.length);
+      const toMove = spectators.filter(s => s.isConnected).slice(0, canAdd);
+      if (toMove.length) {
+        for (const sp of toMove) {
+          if (lobby.players.some(p => p.playerId === sp.playerId)) continue;
+          lobby.players.push({
+            ...sp,
+            seatIndex: lobby.players.length,
+            stack: STARTING_STACK,
+            currentBet: 0,
+            holeCards: [],
+            folded: false,
+            allIn: false,
+            lastAction: null,
+            lastBet: 0,
+          });
+        }
+        lobby.spectators = spectators.filter(s => !toMove.some(m => m.playerId === s.playerId));
+      }
+    }
+
     const activePlayers = lobby.players.filter(p => p.isConnected);
-    if (activePlayers.length < 2) {
-      return { success: false, error: 'Need at least 2 players' };
+    const withChips = activePlayers.filter(p => p.stack > 0);
+    if (withChips.length < 2) {
+      const zero = lobby.players.filter(p => p.isConnected && p.stack <= 0);
+      if (zero.length) {
+        lobby.players = lobby.players.filter(p => !(p.isConnected && p.stack <= 0));
+        for (const z of zero) spectators.push({ ...z, seatIndex: -1, folded: true, allIn: false });
+        lobby.spectators = spectators;
+        lobby.players.forEach((p, i) => (p.seatIndex = i));
+        lobby.version = (lobby.version || 0) + 1;
+      }
+      return { success: false, error: 'Need at least 2 players with chips' };
     }
     
     lobby.gameStarted = true;
@@ -308,6 +378,30 @@ export class PokerGame {
   private startNewHand(code: string): void {
     const lobby = this.lobbies.get(code);
     if (!lobby) return;
+
+    const spectators = lobby.spectators || [];
+    if (spectators.length) {
+      const maxPlayers = lobby.maxPlayers ?? 9;
+      const canAdd = Math.max(0, maxPlayers - lobby.players.length);
+      const toMove = spectators.filter(s => s.isConnected).slice(0, canAdd);
+      if (toMove.length) {
+        for (const sp of toMove) {
+          if (lobby.players.some(p => p.playerId === sp.playerId)) continue;
+          lobby.players.push({
+            ...sp,
+            seatIndex: lobby.players.length,
+            stack: STARTING_STACK,
+            currentBet: 0,
+            holeCards: [],
+            folded: false,
+            allIn: false,
+            lastAction: null,
+            lastBet: 0,
+          });
+        }
+        lobby.spectators = spectators.filter(s => !toMove.some(m => m.playerId === s.playerId));
+      }
+    }
     
     // Filter out players with no chips
     const activePlayers = lobby.players.filter(p => p.stack > 0 && p.isConnected);
