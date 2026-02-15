@@ -10,6 +10,7 @@ import type { UnoPlayerAction } from './uno/types.js';
 import { runMigrations } from './migrate.js';
 import authRouter, { verifyToken, type AuthUser } from './auth.js';
 import shopRouter from './shop.js';
+import leaderboardRouter from './leaderboard.js';
 import pool from './db.js';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -86,6 +87,7 @@ app.use(express.json({ limit: '5mb' }));
 
 app.use('/auth', authRouter);
 app.use('/shop', shopRouter);
+app.use('/leaderboard', leaderboardRouter);
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok' });
@@ -189,7 +191,7 @@ async function broadcastPokerState(code: string) {
       for (const wid of winnerIds) {
         try {
           await pool.query(
-            'UPDATE users SET coins = coins + 5, updated_at = now() WHERE id = $1',
+            'UPDATE users SET coins = coins + 5, wins_poker = wins_poker + 1, updated_at = now() WHERE id = $1',
             [wid],
           );
           console.log(`[reward:poker] +5 coins to winner ${wid} in ${code}`);
@@ -224,7 +226,7 @@ async function broadcastUnoState(code: string) {
     unoGame.markRewardIssued(code);
     try {
       await pool.query(
-        'UPDATE users SET coins = coins + 5, updated_at = now() WHERE id = $1',
+        'UPDATE users SET coins = coins + 5, wins_uno = wins_uno + 1, updated_at = now() WHERE id = $1',
         [lobby.winnerId],
       );
       console.log(`[reward:uno] +5 coins to winner ${lobby.winnerId} in ${code}`);
@@ -478,7 +480,8 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
           ack?.({ ...res, accepted: false, reason: res.error });
           return;
         }
-        ack?.({ success: true, accepted: true, version: (res as any).version ?? 0 });
+        const gameState = unoGame.getClientState(lobbyCode, user.id);
+        ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
         broadcastUnoState(lobbyCode);
         return;
       }
@@ -498,7 +501,8 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         return;
       }
 
-      ack?.({ success: true, accepted: true, version: (res as any).version ?? 0 });
+      const gameState = pokerGame.getClientState(lobbyCode, user.id);
+      ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
       broadcastPokerState(lobbyCode);
     });
 
