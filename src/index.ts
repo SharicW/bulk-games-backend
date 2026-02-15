@@ -207,7 +207,8 @@ async function broadcastPokerState(code: string) {
   // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
   maybeEmitCelebration('poker', code, lobby.celebration ?? null);
 
-  for (const p of lobby.players) {
+  const recipients = [...lobby.players, ...((lobby as any).spectators || [])];
+  for (const p of recipients) {
     const socketId = playerToSocket.get(`poker:${p.playerId}`);
     if (!socketId) continue;
     const clientState = pokerGame.getClientState(code, p.playerId);
@@ -240,13 +241,31 @@ async function broadcastUnoState(code: string) {
   // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
   maybeEmitCelebration('uno', code, lobby.celebration ?? null);
 
-  for (const p of lobby.players) {
+  const recipients = [...lobby.players, ...((lobby as any).spectators || [])];
+  for (const p of recipients) {
     const socketId = playerToSocket.get(`uno:${p.playerId}`);
     if (!socketId) continue;
     const clientState = unoGame.getClientState(code, p.playerId);
     if (clientState) {
       unoNsp.to(socketId).emit('gameState', clientState);
     }
+  }
+
+  if (lobby.phase === 'lobby') {
+    unoNsp.in(roomName('uno', code)).emit('uno:roster', {
+      version: lobby.version ?? 0,
+      players: lobby.players.map((p) => ({
+        playerId: p.playerId,
+        seatIndex: p.seatIndex,
+        nickname: p.nickname,
+        avatarUrl: p.avatarUrl,
+        isConnected: p.isConnected,
+        lastSeenAt: p.lastSeenAt,
+        cardCount: 0,
+        equippedBorder: p.equippedBorder ?? null,
+        equippedEffect: p.equippedEffect ?? null,
+      })),
+    });
   }
 }
 
@@ -470,6 +489,11 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
       }
 
       if (gameType === 'uno') {
+        const lobby = unoGame.getLobby(lobbyCode);
+        if (lobby && (lobby as any).spectators?.some((s: any) => s.playerId === user.id)) {
+          ack?.({ success: false, accepted: false, reason: 'Spectators cannot act', error: 'Spectators cannot act' });
+          return;
+        }
         const action: UnoPlayerAction | undefined = payload?.action;
         if (!action) {
           ack?.({ success: false, accepted: false, reason: 'action is required', error: 'action is required' });
@@ -487,6 +511,11 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
       }
 
       /* Poker */
+      const lobby = pokerGame.getLobby(lobbyCode);
+      if (lobby && (lobby as any).spectators?.some((s: any) => s.playerId === user.id)) {
+        ack?.({ success: false, accepted: false, reason: 'Spectators cannot act', error: 'Spectators cannot act' });
+        return;
+      }
       const action: PlayerAction | undefined = payload?.action;
       const amount: number | undefined = payload?.amount;
 
@@ -642,6 +671,33 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
       }, DISCONNECT_GRACE_MS);
 
       disconnectTimers.set(mapKey, timer);
+    });
+
+    socket.on('leaveLobby', (payload: any, ack?: (r: any) => void) => {
+      const gameType = inferGameType(nsp.name, payload);
+      const lobbyCode: string | undefined = payload?.lobbyCode;
+      if (!lobbyCode) {
+        ack?.({ success: false, error: 'lobbyCode is required' });
+        return;
+      }
+
+      const mapKey = `${gameType}:${user.id}`;
+      socketToPlayer.delete(socket.id);
+      playerToSocket.delete(mapKey);
+      cancelDisconnectTimer(gameType, user.id);
+
+      try { socket.leave(roomName(gameType, lobbyCode)); } catch {}
+
+      if (gameType === 'uno') {
+        unoGame.leaveLobby(lobbyCode, user.id);
+        broadcastUnoState(lobbyCode);
+        ack?.({ success: true });
+        return;
+      }
+
+      pokerGame.leaveLobby(lobbyCode, user.id);
+      broadcastPokerState(lobbyCode);
+      ack?.({ success: true });
     });
   });
 }
