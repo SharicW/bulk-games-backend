@@ -796,7 +796,9 @@ export class PokerGame {
       const winner = lobby.players.find(p => p.playerId === winnerIds[0]);
       const equipped = winner?.equippedEffect ?? null;
       const effectId =
-        equipped === 'effect_red_hearts' ? 'red_hearts'
+        equipped === 'effect_fire_burst' ? 'fire_burst'
+        : equipped === 'effect_sakura_petals' ? 'sakura_petals'
+        : equipped === 'effect_red_hearts' ? 'red_hearts'
         : equipped === 'effect_black_hearts' ? 'black_hearts'
         : 'stars';
       lobby.celebration = {
