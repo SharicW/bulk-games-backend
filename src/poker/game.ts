@@ -938,10 +938,24 @@ export class PokerGame {
       ? showdown.filter(r => r.winnings > 0).map(r => r.playerId)
       : null;
     
+    const spectators = (lobby.spectators || []).map((s) => ({
+      playerId: s.playerId,
+      nickname: s.nickname,
+      avatarUrl: s.avatarUrl,
+      isConnected: s.isConnected,
+      equippedBorder: s.equippedBorder ?? null,
+      equippedEffect: s.equippedEffect ?? null,
+    }));
+
+    const isSpectator = !lobby.players.some((p) => p.playerId === requestingPlayerId) &&
+      (lobby.spectators || []).some((p) => p.playerId === requestingPlayerId);
+
     return {
       lobbyCode: lobby.lobbyCode,
       hostId: lobby.hostId,
       players: clientPlayers,
+      spectators,
+      isSpectator,
       gameStarted: lobby.gameStarted,
       isPublic: lobby.isPublic ?? false,
       maxPlayers: lobby.maxPlayers ?? 9,
