@@ -89,7 +89,7 @@ export interface UnoGameState {
 
   winnerId: string | null;
   /** Server-driven win celebration (emitted once, also included in state for resync) */
-  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals'; createdAt: number };
 
   /** Whether reward has been issued for this game (prevent duplicate +5 coins) */
   rewardIssued: boolean;
@@ -120,7 +120,7 @@ export interface UnoClientState {
   players: UnoClientPlayer[];
   isPublic?: boolean;
   maxPlayers?: number;
-  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts'; createdAt: number };
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals'; createdAt: number };
 
   phase: UnoPhase;
   gameStarted: boolean;
