@@ -20,9 +20,14 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'border_rainbow',  name: 'Rainbow Ring',    type: 'border', price: 50, description: 'A colorful rainbow gradient border.',             cssClass: 'cosmetic-border--rainbow' },
   { id: 'border_neon',     name: 'Neon Glow',       type: 'border', price: 50, description: 'Electric neon glow around your avatar.',          cssClass: 'cosmetic-border--neon' },
   { id: 'border_fire',     name: 'Fire Ring',       type: 'border', price: 50, description: 'Blazing fire ring around your avatar.',           cssClass: 'cosmetic-border--fire' },
+  { id: 'border_ice',      name: 'Ice Ring',        type: 'border', price: 50, description: 'A crisp icy rim with a cool glow.',               cssClass: 'cosmetic-border--ice' },
+  { id: 'border_emerald',  name: 'Emerald Ring',    type: 'border', price: 50, description: 'A deep emerald border with a soft shine.',         cssClass: 'cosmetic-border--emerald' },
+  { id: 'border_purple',   name: 'Purple Aura',     type: 'border', price: 50, description: 'A violet gradient ring with a subtle aura.',       cssClass: 'cosmetic-border--purple' },
   // Effects
   { id: 'effect_red_hearts',   name: 'Red Hearts',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.',      cssClass: 'cosmetic-effect--hearts-red' },
   { id: 'effect_black_hearts', name: 'Black Hearts',   type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.',    cssClass: 'cosmetic-effect--hearts-black' },
+  { id: 'effect_fire_burst',   name: 'Fire Burst',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of fiery sparks.',    cssClass: 'cosmetic-effect--fire-burst' },
+  { id: 'effect_sakura_petals',name: 'Sakura Petals',  type: 'effect', price: 80, description: 'Celebrate wins with drifting sakura petals.',     cssClass: 'cosmetic-effect--sakura-petals' },
 ];
 
 const ITEMS_MAP = new Map(SHOP_ITEMS.map(i => [i.id, i]));
