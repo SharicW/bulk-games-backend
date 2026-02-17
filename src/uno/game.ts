@@ -862,7 +862,9 @@ export class UnoGame {
     if (afterCount === 0) {
       const equipped = next.players[next.currentPlayerIndex]?.equippedEffect ?? null;
       const effectId =
-        equipped === 'effect_red_hearts' ? 'red_hearts'
+        equipped === 'effect_fire_burst' ? 'fire_burst'
+        : equipped === 'effect_sakura_petals' ? 'sakura_petals'
+        : equipped === 'effect_red_hearts' ? 'red_hearts'
         : equipped === 'effect_black_hearts' ? 'black_hearts'
         : 'stars';
       next = {
