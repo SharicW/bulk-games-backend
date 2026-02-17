@@ -634,11 +634,25 @@ export class UnoGame {
       }
     }
 
+    const spectators = (lobby.spectators || []).map((s) => ({
+      playerId: s.playerId,
+      nickname: s.nickname,
+      avatarUrl: s.avatarUrl,
+      isConnected: s.isConnected,
+      equippedBorder: s.equippedBorder ?? null,
+      equippedEffect: s.equippedEffect ?? null,
+    }));
+
+    const isSpectator = !lobby.players.some((p) => p.playerId === requestingPlayerId) &&
+      (lobby.spectators || []).some((p) => p.playerId === requestingPlayerId);
+
     return {
       gameType: 'uno',
       lobbyCode: lobby.lobbyCode,
       hostId: lobby.hostId,
       players,
+      spectators,
+      isSpectator,
       isPublic: lobby.isPublic ?? false,
       maxPlayers: lobby.maxPlayers ?? 10,
       celebration: lobby.celebration ?? null,
