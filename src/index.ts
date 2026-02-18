@@ -387,181 +387,216 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
     /* ── joinLobby ───────────────────────────────────────── */
 
     socket.on('joinLobby', async (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const code: string | undefined = payload?.code;
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const code: string | undefined = payload?.code;
 
-      if (!code) {
-        ack?.({ success: false, error: 'Lobby code is required' });
-        return;
-      }
-
-      // Minimal prod-safe join logs (helps debug Railway issues)
-      logInfo(`[joinLobby:req] nsp=${nsp.name} gameType=${gameType} code=${code} userId=${user.id}`);
-
-      const cosmetics = await fetchUserCosmetics(user.id);
-
-      if (gameType === 'uno') {
-        const res = unoGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-        if (!res.success) {
-          logWarn(`[joinLobby:reject] gameType=uno code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
-          ack?.(res);
+        if (!code) {
+          ack?.({ success: false, error: 'Lobby code is required' });
           return;
         }
 
-        const wasReconnect = cancelDisconnectTimer('uno', user.id);
-        if (IS_DEV) console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
-        socket.join(roomName('uno', code));
-        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
-        playerToSocket.set(`uno:${user.id}`, socket.id);
+        // Minimal prod-safe join logs (helps debug Railway issues)
+        logInfo(`[joinLobby:req] nsp=${nsp.name} gameType=${gameType} code=${code} userId=${user.id}`);
 
-        ack?.({ success: true, gameState: unoGame.getClientState(code, user.id) });
-        broadcastUnoState(code);
-        const l = unoGame.getLobby(code);
-        logInfo(`[joinLobby:ok] gameType=uno code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0}`);
-        return;
+        const cosmetics = await fetchUserCosmetics(user.id);
+
+        if (gameType === 'uno') {
+          const res = unoGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
+          if (!res.success) {
+            logWarn(`[joinLobby:reject] gameType=uno code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
+            ack?.(res);
+            return;
+          }
+
+          const wasReconnect = cancelDisconnectTimer('uno', user.id);
+          if (IS_DEV) console.log(`[joinLobby:uno] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
+          socket.join(roomName('uno', code));
+          socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
+          playerToSocket.set(`uno:${user.id}`, socket.id);
+
+          ack?.({ success: true, gameState: unoGame.getClientState(code, user.id) });
+          broadcastUnoState(code);
+          const l = unoGame.getLobby(code);
+          logInfo(`[joinLobby:ok] gameType=uno code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0} spectators=${l?.spectators?.length ?? 0}`);
+          return;
+        }
+
+        /* Poker */
+        const res = pokerGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
+        if (!res.success) {
+          logWarn(`[joinLobby:reject] gameType=poker code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
+          ack?.({ success: false, error: res.error || 'Lobby not found or full' });
+          return;
+        }
+
+        const wasReconnect = cancelDisconnectTimer('poker', user.id);
+        if (IS_DEV) console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
+        socket.join(roomName('poker', code));
+        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
+        playerToSocket.set(`poker:${user.id}`, socket.id);
+
+        ack?.({ success: true, gameState: pokerGame.getClientState(code, user.id) });
+        broadcastPokerState(code);
+        const l = pokerGame.getLobby(code);
+        logInfo(`[joinLobby:ok] gameType=poker code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0}`);
+      } catch (err: any) {
+        console.error(`[joinLobby] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error' });
       }
-
-      /* Poker */
-      const res = pokerGame.joinLobby(code, user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-      if (!res.success) {
-        logWarn(`[joinLobby:reject] gameType=poker code=${code} userId=${user.id} reason=${res.error || 'unknown'}`);
-        ack?.({ success: false, error: res.error || 'Lobby not found or full' });
-        return;
-      }
-
-      const wasReconnect = cancelDisconnectTimer('poker', user.id);
-      if (IS_DEV) console.log(`[joinLobby:poker] code=${code} userId=${user.id} (reconnect=${!!wasReconnect})`);
-      socket.join(roomName('poker', code));
-      socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
-      playerToSocket.set(`poker:${user.id}`, socket.id);
-
-      ack?.({ success: true, gameState: pokerGame.getClientState(code, user.id) });
-      broadcastPokerState(code);
-      const l = pokerGame.getLobby(code);
-      logInfo(`[joinLobby:ok] gameType=poker code=${code} userId=${user.id} players=${l?.players.filter(p => p.isConnected).length ?? 0}`);
     });
 
     /* ── startGame ───────────────────────────────────────── */
 
     socket.on('startGame', (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const lobbyCode: string | undefined = payload?.lobbyCode;
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const lobbyCode: string | undefined = payload?.lobbyCode;
 
-      if (!lobbyCode) {
-        ack?.({ success: false, error: 'lobbyCode is required' });
-        return;
-      }
-
-      if (gameType === 'uno') {
-        const res = unoGame.startGame(lobbyCode, user.id);
-        if (IS_DEV) console.log(`[startGame:uno] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
-        if (!res.success) {
-          ack?.({ ...res, accepted: false, reason: res.error });
+        if (!lobbyCode) {
+          ack?.({ success: false, error: 'lobbyCode is required' });
           return;
         }
-        const unoLobby = unoGame.getLobby(lobbyCode);
-        ack?.({ success: true, accepted: true, version: unoLobby?.version ?? 0 });
-        broadcastUnoState(lobbyCode);
-        return;
-      }
 
-      /* Poker */
-      const res = pokerGame.startGame(lobbyCode, user.id);
-      if (IS_DEV) console.log(`[startGame:poker] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
-      if (!res.success) {
-        ack?.({ success: false, accepted: false, reason: res.error || 'Only host can start / not enough players / already started', error: res.error || 'Only host can start / not enough players / already started' });
-        return;
+        if (gameType === 'uno') {
+          const res = unoGame.startGame(lobbyCode, user.id);
+          if (IS_DEV) console.log(`[startGame:uno] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
+          if (!res.success) {
+            ack?.({ ...res, accepted: false, reason: res.error });
+            return;
+          }
+          const unoLobby = unoGame.getLobby(lobbyCode);
+          ack?.({ success: true, accepted: true, version: unoLobby?.version ?? 0 });
+          broadcastUnoState(lobbyCode);
+          return;
+        }
+
+        /* Poker */
+        const res = pokerGame.startGame(lobbyCode, user.id);
+        if (IS_DEV) console.log(`[startGame:poker] code=${lobbyCode} userId=${user.id} success=${res.success} error=${res.error || ''}`);
+        if (!res.success) {
+          ack?.({ success: false, accepted: false, reason: res.error || 'Only host can start / not enough players / already started', error: res.error || 'Only host can start / not enough players / already started' });
+          return;
+        }
+        const pokerLobby = pokerGame.getLobby(lobbyCode);
+        ack?.({ success: true, accepted: true, version: pokerLobby?.version ?? 0 });
+        broadcastPokerState(lobbyCode);
+      } catch (err: any) {
+        console.error(`[startGame] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error', accepted: false });
       }
-      const pokerLobby = pokerGame.getLobby(lobbyCode);
-      ack?.({ success: true, accepted: true, version: pokerLobby?.version ?? 0 });
-      broadcastPokerState(lobbyCode);
     });
 
     /* ── playerAction ────────────────────────────────────── */
 
     socket.on('playerAction', (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const lobbyCode: string | undefined = payload?.lobbyCode;
+      // CRITICAL: entire handler is wrapped in try-catch so ack is ALWAYS called,
+      // even on unexpected exceptions.  Without this, a thrown error would leave
+      // the client waiting 8 000 ms for the timeout.
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const lobbyCode: string | undefined = payload?.lobbyCode;
 
-      if (!lobbyCode) {
-        ack?.({ success: false, error: 'lobbyCode is required' });
-        return;
-      }
+        if (!lobbyCode) {
+          ack?.({ success: false, error: 'lobbyCode is required' });
+          return;
+        }
 
-      if (gameType === 'uno') {
-        const lobby = unoGame.getLobby(lobbyCode);
+        if (gameType === 'uno') {
+          const lobby = unoGame.getLobby(lobbyCode);
+          if (lobby && (lobby as any).spectators?.some((s: any) => s.playerId === user.id)) {
+            ack?.({ success: false, accepted: false, reason: 'Spectators cannot act', error: 'Spectators cannot act' });
+            return;
+          }
+          const action: UnoPlayerAction | undefined = payload?.action;
+          if (!action) {
+            ack?.({ success: false, accepted: false, reason: 'action is required', error: 'action is required' });
+            return;
+          }
+
+          if (IS_DEV) logInfo(`[playerAction:uno] code=${lobbyCode} userId=${user.id} type=${action.type}`);
+
+          const res = unoGame.handleAction(lobbyCode, user.id, action);
+
+          if (IS_DEV) logInfo(`[playerAction:uno] code=${lobbyCode} userId=${user.id} type=${action.type} ok=${res.success} err=${res.error ?? ''} — ack sent`);
+
+          if (!res.success) {
+            ack?.({ ...res, accepted: false, reason: res.error });
+            return;
+          }
+          const gameState = unoGame.getClientState(lobbyCode, user.id);
+          ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
+          broadcastUnoState(lobbyCode);
+          return;
+        }
+
+        /* Poker */
+        const lobby = pokerGame.getLobby(lobbyCode);
         if (lobby && (lobby as any).spectators?.some((s: any) => s.playerId === user.id)) {
           ack?.({ success: false, accepted: false, reason: 'Spectators cannot act', error: 'Spectators cannot act' });
           return;
         }
-        const action: UnoPlayerAction | undefined = payload?.action;
+        const action: PlayerAction | undefined = payload?.action;
+        const amount: number | undefined = payload?.amount;
+
         if (!action) {
           ack?.({ success: false, accepted: false, reason: 'action is required', error: 'action is required' });
           return;
         }
-        const res = unoGame.handleAction(lobbyCode, user.id, action);
+
+        if (IS_DEV) logInfo(`[playerAction:poker] code=${lobbyCode} userId=${user.id} action=${action} amount=${amount ?? ''}`);
+
+        const res = pokerGame.handleAction(lobbyCode, user.id, action, amount);
+
+        if (IS_DEV) logInfo(`[playerAction:poker] code=${lobbyCode} userId=${user.id} action=${action} ok=${res.success} err=${res.error ?? ''} — ack sent`);
+
         if (!res.success) {
-          ack?.({ ...res, accepted: false, reason: res.error });
+          ack?.({ success: false, accepted: false, reason: res.error || 'Invalid action', error: res.error || 'Invalid action / not your turn / lobby not found' });
           return;
         }
-        const gameState = unoGame.getClientState(lobbyCode, user.id);
+
+        const gameState = pokerGame.getClientState(lobbyCode, user.id);
         ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
-        broadcastUnoState(lobbyCode);
-        return;
+        broadcastPokerState(lobbyCode);
+      } catch (err: any) {
+        console.error(`[playerAction] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error', accepted: false });
       }
-
-      /* Poker */
-      const lobby = pokerGame.getLobby(lobbyCode);
-      if (lobby && (lobby as any).spectators?.some((s: any) => s.playerId === user.id)) {
-        ack?.({ success: false, accepted: false, reason: 'Spectators cannot act', error: 'Spectators cannot act' });
-        return;
-      }
-      const action: PlayerAction | undefined = payload?.action;
-      const amount: number | undefined = payload?.amount;
-
-      if (!action) {
-        ack?.({ success: false, accepted: false, reason: 'action is required', error: 'action is required' });
-        return;
-      }
-
-      const res = pokerGame.handleAction(lobbyCode, user.id, action, amount);
-      if (!res.success) {
-        ack?.({ success: false, accepted: false, reason: res.error || 'Invalid action', error: res.error || 'Invalid action / not your turn / lobby not found' });
-        return;
-      }
-
-      const gameState = pokerGame.getClientState(lobbyCode, user.id);
-      ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
-      broadcastPokerState(lobbyCode);
     });
 
     /* ── requestState ────────────────────────────────────── */
 
     socket.on('requestState', (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const lobbyCode: string | undefined = payload?.lobbyCode;
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const lobbyCode: string | undefined = payload?.lobbyCode;
 
-      if (!lobbyCode) {
-        ack?.({ success: false, error: 'lobbyCode is required' });
-        return;
-      }
+        if (!lobbyCode) {
+          ack?.({ success: false, error: 'lobbyCode is required' });
+          return;
+        }
 
-      if (gameType === 'uno') {
-        const lobby = unoGame.getLobby(lobbyCode);
+        if (gameType === 'uno') {
+          const lobby = unoGame.getLobby(lobbyCode);
+          if (!lobby) {
+            ack?.({ success: false, error: 'Lobby not found' });
+            return;
+          }
+          if (IS_DEV) logInfo(`[requestState:uno] code=${lobbyCode} userId=${user.id} v=${lobby.version}`);
+          ack?.({ success: true, gameState: unoGame.getClientState(lobbyCode, user.id) });
+          return;
+        }
+
+        const lobby = pokerGame.getLobby(lobbyCode);
         if (!lobby) {
           ack?.({ success: false, error: 'Lobby not found' });
           return;
         }
-        ack?.({ success: true, gameState: unoGame.getClientState(lobbyCode, user.id) });
-        return;
+        ack?.({ success: true, gameState: pokerGame.getClientState(lobbyCode, user.id) });
+      } catch (err: any) {
+        console.error(`[requestState] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error' });
       }
-
-      const lobby = pokerGame.getLobby(lobbyCode);
-      if (!lobby) {
-        ack?.({ success: false, error: 'Lobby not found' });
-        return;
-      }
-      ack?.({ success: true, gameState: pokerGame.getClientState(lobbyCode, user.id) });
     });
 
     /* ── endLobby ────────────────────────────────────────── */
@@ -627,7 +662,10 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
       if (IS_DEV) console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} — starting ${DISCONNECT_GRACE_MS}ms grace`);
 
-      /* Mark player as disconnected right away so others see the status */
+      /* Mark player as disconnected right away so others see the status.
+       * We must bump the lobby version here so the broadcast carries a new
+       * version number; otherwise clients whose lastVersion == current version
+       * would silently drop the update as a "stale duplicate". */
       if (gameType === 'uno') {
         const lobby = unoGame.getLobby(lobbyCode);
         if (lobby) {
@@ -636,7 +674,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
             p.isConnected = false;
             p.lastSeenAt = Date.now();
           }
-          broadcastUnoState(lobbyCode);
+          unoGame.bumpVersion(lobbyCode); // increments version → broadcast inside
         }
       } else {
         const lobby = pokerGame.getLobby(lobbyCode);
