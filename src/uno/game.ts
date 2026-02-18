@@ -284,8 +284,11 @@ export class UnoGame {
       existing.avatarUrl = avatarUrl ?? existing.avatarUrl;
       existing.equippedBorder = equippedBorder ?? existing.equippedBorder;
       existing.equippedEffect = equippedEffect ?? existing.equippedEffect;
+      // NOTE: do NOT call this.lobbies.set(code, lobby) after bump() — bump() already
+      // persists the bumped version.  Calling set() afterwards would revert the version,
+      // causing the next broadcast to carry the old version number, which clients would
+      // then ignore (stale-version guard).
       this.bump(code);
-      this.lobbies.set(code, lobby);
       return { success: true };
     }
 
@@ -296,8 +299,8 @@ export class UnoGame {
       existingSpec.avatarUrl = avatarUrl ?? existingSpec.avatarUrl;
       existingSpec.equippedBorder = equippedBorder ?? existingSpec.equippedBorder;
       existingSpec.equippedEffect = equippedEffect ?? existingSpec.equippedEffect;
+      // Same fix: let bump() own the final set().
       this.bump(code);
-      this.lobbies.set(code, lobby);
       return { success: true };
     }
 
@@ -738,6 +741,16 @@ export class UnoGame {
     this.lobbies.set(code, this.bumpState(next));
     this.onStateUpdate(code);
     return { success: true };
+  }
+
+  /**
+   * Bump the lobby version and trigger a state broadcast.
+   * Used externally (e.g. when marking a player as disconnected immediately
+   * inside the socket disconnect handler) so all peers receive an up-to-date
+   * version number and don't drop the broadcast as a stale duplicate.
+   */
+  bumpVersion(code: string): void {
+    this.bump(code);
   }
 
   /** Mark that the reward for this game has been issued (prevents duplicates) */
