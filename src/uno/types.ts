@@ -113,11 +113,25 @@ export interface UnoClientPlayer {
   equippedEffect: string | null;
 }
 
+/** A spectator present in the UNO lobby but not holding cards. */
+export interface UnoClientSpectator {
+  playerId: string;
+  nickname: string;
+  avatarUrl: string | null;
+  isConnected: boolean;
+  equippedBorder: string | null;
+  equippedEffect: string | null;
+}
+
 export interface UnoClientState {
   gameType: 'uno';
   lobbyCode: string;
   hostId: string;
   players: UnoClientPlayer[];
+  /** Spectators watching the game (not in the player list). */
+  spectators: UnoClientSpectator[];
+  /** True when the requesting player is spectating rather than playing. */
+  isSpectator: boolean;
   isPublic?: boolean;
   maxPlayers?: number;
   celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals'; createdAt: number };
