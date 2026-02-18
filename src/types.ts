@@ -79,10 +79,24 @@ export interface ShowdownResult {
   winnings: number;
 }
 
+/** A spectator present in the lobby but not seated at the table. */
+export interface ClientSpectator {
+  playerId: string;
+  nickname: string;
+  avatarUrl: string | null;
+  isConnected: boolean;
+  equippedBorder: string | null;
+  equippedEffect: string | null;
+}
+
 export interface ClientGameState {
   lobbyCode: string;
   hostId: string;
   players: ClientPlayer[];
+  /** Spectators watching the game (not seated). */
+  spectators: ClientSpectator[];
+  /** True when the requesting player is spectating rather than playing. */
+  isSpectator: boolean;
   gameStarted: boolean;
   isPublic?: boolean;
   maxPlayers?: number;
