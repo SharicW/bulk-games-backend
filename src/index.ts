@@ -218,7 +218,7 @@ async function broadcastPokerState(code: string) {
     }
   }
 
-  if (IS_DEV) console.log(`[broadcast:poker] ${code} → ${lobby.players.length} players v${lobby.version ?? 0}`);
+  if (IS_DEV) console.log(`[broadcast:poker] ${code} -> ${lobby.players.length} players v${lobby.version ?? 0}`);
 
   // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
   maybeEmitCelebration('poker', code, lobby.celebration ?? null);
@@ -252,7 +252,7 @@ async function broadcastUnoState(code: string) {
     }
   }
 
-  if (IS_DEV) console.log(`[broadcast:uno] ${code} → ${lobby.players.length} players v${lobby.version ?? 0}`);
+  if (IS_DEV) console.log(`[broadcast:uno] ${code} -> ${lobby.players.length} players v${lobby.version ?? 0}`);
 
   // ── Emit celebration ONCE per celebration.id (visible to everyone) ──
   maybeEmitCelebration('uno', code, lobby.celebration ?? null);
@@ -286,7 +286,7 @@ async function broadcastUnoState(code: string) {
 }
 
 // ── Celebration dedupe emitter ─────────────────────────────────────────
-const lastCelebrationEmitted = new Map<string, string>(); // key: `${gameType}:${code}` → celebrationId
+const lastCelebrationEmitted = new Map<string, string>(); // key: `${gameType}:${code}` -> celebrationId
 function maybeEmitCelebration(
   gameType: GameType,
   code: string,
@@ -687,11 +687,11 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
       /* If a newer socket already replaced this one, do nothing */
       const currentSocketId = playerToSocket.get(mapKey);
       if (currentSocketId && currentSocketId !== socket.id) {
-        console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} — already replaced by ${currentSocketId}, skip`);
+        console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} - already replaced by ${currentSocketId}, skip`);
         return;
       }
 
-      if (IS_DEV) console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} — starting ${DISCONNECT_GRACE_MS}ms grace`);
+      if (IS_DEV) console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} - starting ${DISCONNECT_GRACE_MS}ms grace`);
 
       /* Mark player as disconnected right away so others see the status.
        * We must bump the lobby version here so the broadcast carries a new
@@ -705,7 +705,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
             p.isConnected = false;
             p.lastSeenAt = Date.now();
           }
-          unoGame.bumpVersion(lobbyCode); // increments version → broadcast inside
+          unoGame.bumpVersion(lobbyCode); // increments version -> broadcast inside
         }
       } else {
         const lobby = pokerGame.getLobby(lobbyCode);
@@ -723,12 +723,12 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         /* Double-check: if the player reconnected in the meantime, skip */
         const nowSocket = playerToSocket.get(mapKey);
         if (nowSocket && nowSocket !== socket.id) {
-          if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} — player reconnected (${nowSocket}), skip leave`);
+          if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} - player reconnected (${nowSocket}), skip leave`);
           return;
         }
 
         playerToSocket.delete(mapKey);
-        if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} — grace expired, executing leaveLobby`);
+        if (IS_DEV) console.log(`[disconnect:grace] ${mapKey} - grace expired, executing leaveLobby`);
 
         if (gameType === 'uno') {
           unoGame.leaveLobby(lobbyCode, userId);
