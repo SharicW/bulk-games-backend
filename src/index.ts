@@ -20,15 +20,23 @@ const logWarn = (...args: any[]) => console.warn(...args);
 const app = express();
 const httpServer = createServer(app);
 
-/** Fetch equipped cosmetics for a user from DB */
+/** Fetch equipped cosmetics for a user from DB.
+ *  Includes a hard timeout so a slow/hung DB query never blocks joinLobby. */
+const COSMETICS_TIMEOUT_MS = 2500;
 async function fetchUserCosmetics(userId: string | number): Promise<{ equippedBorder: string | null; equippedEffect: string | null }> {
   try {
-    const res = await pool.query('SELECT equipped_border, equipped_effect FROM users WHERE id = $1', [userId]);
-    if (res.rows.length > 0) {
+    const timeoutPromise = new Promise<null>((_, reject) =>
+      setTimeout(() => reject(new Error('cosmetics query timeout')), COSMETICS_TIMEOUT_MS),
+    );
+    const res = await Promise.race([
+      pool.query('SELECT equipped_border, equipped_effect FROM users WHERE id = $1', [userId]),
+      timeoutPromise,
+    ]);
+    if (res && res.rows.length > 0) {
       return { equippedBorder: res.rows[0].equipped_border ?? null, equippedEffect: res.rows[0].equipped_effect ?? null };
     }
   } catch (e) {
-    console.error('[fetchUserCosmetics] DB error', e);
+    console.error('[fetchUserCosmetics] DB error/timeout', e);
   }
   return { equippedBorder: null, equippedEffect: null };
 }
@@ -351,37 +359,42 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
     /* ── createLobby ─────────────────────────────────────── */
 
     socket.on('createLobby', async (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
+      try {
+        const gameType = inferGameType(nsp.name, payload);
 
-      if (user.role !== 'host') {
-        ack?.({ success: false, error: 'Only host can create lobby' });
-        return;
-      }
+        if (user.role !== 'host') {
+          ack?.({ success: false, error: 'Only host can create lobby' });
+          return;
+        }
 
-      const cosmetics = await fetchUserCosmetics(user.id);
+        const cosmetics = await fetchUserCosmetics(user.id);
 
-      if (gameType === 'uno') {
-        const code = unoGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-      if (IS_DEV) console.log(`[createLobby:uno] code=${code} hostId=${user.id}`);
-        socket.join(roomName('uno', code));
-        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
-        playerToSocket.set(`uno:${user.id}`, socket.id);
-        cancelDisconnectTimer('uno', user.id);
+        if (gameType === 'uno') {
+          const code = unoGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
+          if (IS_DEV) console.log(`[createLobby:uno] code=${code} hostId=${user.id}`);
+          socket.join(roomName('uno', code));
+          socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'uno' });
+          playerToSocket.set(`uno:${user.id}`, socket.id);
+          cancelDisconnectTimer('uno', user.id);
+
+          ack?.({ success: true, code });
+          broadcastUnoState(code);
+          return;
+        }
+
+        const code = pokerGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
+        if (IS_DEV) console.log(`[createLobby:poker] code=${code} hostId=${user.id}`);
+        socket.join(roomName('poker', code));
+        socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
+        playerToSocket.set(`poker:${user.id}`, socket.id);
+        cancelDisconnectTimer('poker', user.id);
 
         ack?.({ success: true, code });
-        broadcastUnoState(code);
-        return;
+        broadcastPokerState(code);
+      } catch (err: any) {
+        console.error(`[createLobby] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error' });
       }
-
-      const code = pokerGame.createLobby(user.id, user.nickname, user.avatarUrl, cosmetics.equippedBorder, cosmetics.equippedEffect);
-      if (IS_DEV) console.log(`[createLobby:poker] code=${code} hostId=${user.id}`);
-      socket.join(roomName('poker', code));
-      socketToPlayer.set(socket.id, { userId: user.id, lobbyCode: code, gameType: 'poker' });
-      playerToSocket.set(`poker:${user.id}`, socket.id);
-      cancelDisconnectTimer('poker', user.id);
-
-      ack?.({ success: true, code });
-      broadcastPokerState(code);
     });
 
     /* ── joinLobby ───────────────────────────────────────── */
@@ -602,34 +615,38 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
     /* ── endLobby ────────────────────────────────────────── */
 
     socket.on('endLobby', (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const lobbyCode: string | undefined = payload?.lobbyCode;
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const lobbyCode: string | undefined = payload?.lobbyCode;
 
-      if (!lobbyCode) {
-        ack?.({ success: false, error: 'lobbyCode is required' });
-        return;
-      }
-
-      if (gameType === 'uno') {
-        const res = unoGame.endLobby(lobbyCode, user.id);
-        if (!res.success) {
-          ack?.(res);
+        if (!lobbyCode) {
+          ack?.({ success: false, error: 'lobbyCode is required' });
           return;
         }
-        /* Emit lobbyEnded on the CORRECT namespace */
-        unoNsp.in(roomName('uno', lobbyCode)).emit('lobbyEnded');
-        ack?.({ success: true });
-        return;
-      }
 
-      /* Poker */
-      const res = pokerGame.endLobby(lobbyCode, user.id);
-      if (!res.success) {
-        ack?.({ success: false, error: res.error || 'Only host can end the lobby / lobby not found' });
-        return;
+        if (gameType === 'uno') {
+          const res = unoGame.endLobby(lobbyCode, user.id);
+          if (!res.success) {
+            ack?.(res);
+            return;
+          }
+          unoNsp.in(roomName('uno', lobbyCode)).emit('lobbyEnded');
+          ack?.({ success: true });
+          return;
+        }
+
+        /* Poker */
+        const res = pokerGame.endLobby(lobbyCode, user.id);
+        if (!res.success) {
+          ack?.({ success: false, error: res.error || 'Only host can end the lobby / lobby not found' });
+          return;
+        }
+        pokerNsp.in(roomName('poker', lobbyCode)).emit('lobbyEnded');
+        ack?.({ success: true });
+      } catch (err: any) {
+        console.error(`[endLobby] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error' });
       }
-      pokerNsp.in(roomName('poker', lobbyCode)).emit('lobbyEnded');
-      ack?.({ success: true });
     });
 
     /* ── disconnect ──────────────────────────────────────── */
@@ -712,30 +729,35 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
     });
 
     socket.on('leaveLobby', (payload: any, ack?: (r: any) => void) => {
-      const gameType = inferGameType(nsp.name, payload);
-      const lobbyCode: string | undefined = payload?.lobbyCode;
-      if (!lobbyCode) {
-        ack?.({ success: false, error: 'lobbyCode is required' });
-        return;
-      }
+      try {
+        const gameType = inferGameType(nsp.name, payload);
+        const lobbyCode: string | undefined = payload?.lobbyCode;
+        if (!lobbyCode) {
+          ack?.({ success: false, error: 'lobbyCode is required' });
+          return;
+        }
 
-      const mapKey = `${gameType}:${user.id}`;
-      socketToPlayer.delete(socket.id);
-      playerToSocket.delete(mapKey);
-      cancelDisconnectTimer(gameType, user.id);
+        const mapKey = `${gameType}:${user.id}`;
+        socketToPlayer.delete(socket.id);
+        playerToSocket.delete(mapKey);
+        cancelDisconnectTimer(gameType, user.id);
 
-      try { socket.leave(roomName(gameType, lobbyCode)); } catch {}
+        try { socket.leave(roomName(gameType, lobbyCode)); } catch {}
 
-      if (gameType === 'uno') {
-        unoGame.leaveLobby(lobbyCode, user.id);
-        broadcastUnoState(lobbyCode);
+        if (gameType === 'uno') {
+          unoGame.leaveLobby(lobbyCode, user.id);
+          broadcastUnoState(lobbyCode);
+          ack?.({ success: true });
+          return;
+        }
+
+        pokerGame.leaveLobby(lobbyCode, user.id);
+        broadcastPokerState(lobbyCode);
         ack?.({ success: true });
-        return;
+      } catch (err: any) {
+        console.error(`[leaveLobby] uncaught error userId=${user.id}:`, err?.message || err);
+        ack?.({ success: false, error: 'Internal server error' });
       }
-
-      pokerGame.leaveLobby(lobbyCode, user.id);
-      broadcastPokerState(lobbyCode);
-      ack?.({ success: true });
     });
   });
 }
