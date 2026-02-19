@@ -284,7 +284,7 @@ export class UnoGame {
       existing.avatarUrl = avatarUrl ?? existing.avatarUrl;
       existing.equippedBorder = equippedBorder ?? existing.equippedBorder;
       existing.equippedEffect = equippedEffect ?? existing.equippedEffect;
-      // NOTE: do NOT call this.lobbies.set(code, lobby) after bump() — bump() already
+      // NOTE: do NOT call this.lobbies.set(code, lobby) after bump() - bump() already
       // persists the bumped version.  Calling set() afterwards would revert the version,
       // causing the next broadcast to carry the old version number, which clients would
       // then ignore (stale-version guard).
@@ -561,7 +561,7 @@ export class UnoGame {
     if (!lobby) return { success: false, error: 'Lobby not found' };
     if (!lobby.gameStarted || lobby.phase !== 'playing') return { success: false, error: 'Game not in progress' };
 
-    /* ── UNO call / catch — no turn check needed ──────── */
+    /* ── UNO call / catch - no turn check needed ──────── */
     if (action.type === 'callUno') {
       return this.applyCallUno(lobby, code, odotpid);
     }
@@ -873,7 +873,7 @@ export class UnoGame {
     }
 
     if (afterCount === 1) {
-      /* Player must press UNO — set the flag so others can catch them */
+      /* Player must press UNO - set the flag so others can catch them */
       const prompt: UnoPrompt = {
         active: true,
         targetPlayerId: pid,
