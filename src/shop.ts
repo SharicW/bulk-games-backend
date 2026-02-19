@@ -23,11 +23,14 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'border_ice',      name: 'Ice Ring',        type: 'border', price: 50, description: 'A crisp icy rim with a cool glow.',               cssClass: 'cosmetic-border--ice' },
   { id: 'border_emerald',  name: 'Emerald Ring',    type: 'border', price: 50, description: 'A deep emerald border with a soft shine.',         cssClass: 'cosmetic-border--emerald' },
   { id: 'border_purple',   name: 'Purple Aura',     type: 'border', price: 50, description: 'A violet gradient ring with a subtle aura.',       cssClass: 'cosmetic-border--purple' },
+  { id: 'border_ruby',     name: 'Ruby Ring',       type: 'border', price: 50, description: 'A deep crimson ruby ring with a soft red glow.',    cssClass: 'cosmetic-border--ruby' },
   // Effects
-  { id: 'effect_red_hearts',   name: 'Red Hearts',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.',      cssClass: 'cosmetic-effect--hearts-red' },
-  { id: 'effect_black_hearts', name: 'Black Hearts',   type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.',    cssClass: 'cosmetic-effect--hearts-black' },
-  { id: 'effect_fire_burst',   name: 'Fire Burst',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of fiery sparks.',    cssClass: 'cosmetic-effect--fire-burst' },
-  { id: 'effect_sakura_petals',name: 'Sakura Petals',  type: 'effect', price: 80, description: 'Celebrate wins with drifting sakura petals.',     cssClass: 'cosmetic-effect--sakura-petals' },
+  { id: 'effect_red_hearts',    name: 'Red Hearts',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.',        cssClass: 'cosmetic-effect--hearts-red' },
+  { id: 'effect_black_hearts',  name: 'Black Hearts',   type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.',      cssClass: 'cosmetic-effect--hearts-black' },
+  { id: 'effect_fire_burst',    name: 'Fire Burst',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of fiery sparks.',      cssClass: 'cosmetic-effect--fire-burst' },
+  { id: 'effect_sakura_petals', name: 'Sakura Petals',  type: 'effect', price: 80, description: 'Celebrate wins with drifting sakura petals.',       cssClass: 'cosmetic-effect--sakura-petals' },
+  { id: 'effect_gold_stars',    name: 'Gold Stars',     type: 'effect', price: 80, description: 'Celebrate wins with a shower of golden stars.',     cssClass: 'cosmetic-effect--gold-stars' },
+  { id: 'effect_rainbow_burst', name: 'Rainbow Burst',  type: 'effect', price: 80, description: 'Celebrate wins with a burst of rainbow sparkles.',  cssClass: 'cosmetic-effect--rainbow-burst' },
 ];
 
 const ITEMS_MAP = new Map(SHOP_ITEMS.map(i => [i.id, i]));
