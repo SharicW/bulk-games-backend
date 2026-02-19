@@ -304,7 +304,7 @@ export class UnoGame {
       return { success: true };
     }
 
-    // In-game join → spectator
+    // In-game join -> spectator
     if (lobby.phase !== 'lobby' || lobby.gameStarted) {
       if (spectators.length >= 30) return { success: false, error: 'Too many spectators' };
       spectators.push({
@@ -517,7 +517,7 @@ export class UnoGame {
 
     next = addLog(next, {
       type: 'started',
-      text: `Game started — Starting card: ${start ? cardLabel(start.face) : 'None'}`,
+      text: `Game started - Starting card: ${start ? cardLabel(start.face) : 'None'}`,
     });
 
     // apply start card effect
@@ -865,7 +865,7 @@ export class UnoGame {
       next = addLog(next, {
         type: 'played',
         playerId: pid,
-        text: `${player.nickname} played ${cardLabel(card.face)} — Color: ${chosenColor!.toUpperCase()}`,
+        text: `${player.nickname} played ${cardLabel(card.face)} - Color: ${chosenColor!.toUpperCase()}`,
       });
     } else {
       next = { ...next, currentColor: card.face.color };
