@@ -109,6 +109,14 @@ const io = new Server(httpServer, {
     credentials: true,
     methods: ['GET', 'POST'],
   },
+  // Increase ping timeout to survive Railway's 30s proxy idle timeout.
+  // Default pingInterval(25s) + pingTimeout(20s) can cause false disconnects
+  // behind a proxy.  Setting pingInterval<30s keeps the connection alive.
+  pingInterval: 20000,
+  pingTimeout: 30000,
+  // Allow both transports; websocket is preferred, polling is the fallback.
+  // Railway supports websockets natively; polling adds latency.
+  transports: ['websocket', 'polling'],
 });
 
 /* Namespace references — used for broadcasting on the correct namespace */
@@ -531,7 +539,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
           const res = unoGame.handleAction(lobbyCode, user.id, action);
 
-          if (IS_DEV) logInfo(`[playerAction:uno] code=${lobbyCode} userId=${user.id} type=${action.type} ok=${res.success} err=${res.error ?? ''} — ack sent`);
+          if (IS_DEV) logInfo(`[playerAction:uno] code=${lobbyCode} userId=${user.id} type=${action.type} ok=${res.success} err=${res.error ?? ''} - ack sent`);
 
           if (!res.success) {
             ack?.({ ...res, accepted: false, reason: res.error });
@@ -540,6 +548,12 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
           const gameState = unoGame.getClientState(lobbyCode, user.id);
           ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
           broadcastUnoState(lobbyCode);
+
+          // Notify room of draw for opponent card-back animation.
+          // Intentionally contains NO card face — only the drawer sees the real card via ACK.
+          if (action.type === 'draw') {
+            unoNsp.in(roomName('uno', lobbyCode)).emit('uno:drawFx', { playerId: user.id, count: 1 });
+          }
           return;
         }
 
@@ -561,7 +575,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
 
         const res = pokerGame.handleAction(lobbyCode, user.id, action, amount);
 
-        if (IS_DEV) logInfo(`[playerAction:poker] code=${lobbyCode} userId=${user.id} action=${action} ok=${res.success} err=${res.error ?? ''} — ack sent`);
+        if (IS_DEV) logInfo(`[playerAction:poker] code=${lobbyCode} userId=${user.id} action=${action} ok=${res.success} err=${res.error ?? ''} - ack sent`);
 
         if (!res.success) {
           ack?.({ success: false, accepted: false, reason: res.error || 'Invalid action', error: res.error || 'Invalid action / not your turn / lobby not found' });
