@@ -43,7 +43,7 @@ export interface GameState {
   /** Max players (used for public room listing / join guards) */
   maxPlayers?: number;
   /** Server-driven win celebration (emitted once, also included in state for resync) */
-  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals'; createdAt: number };
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals' | 'gold_stars' | 'rainbow_burst'; createdAt: number };
   deck: Card[];
   communityCards: Card[];
   pots: Pot[];
@@ -100,7 +100,7 @@ export interface ClientGameState {
   gameStarted: boolean;
   isPublic?: boolean;
   maxPlayers?: number;
-  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals'; createdAt: number };
+  celebration?: null | { id: string; winnerId: string; effectId: 'stars' | 'red_hearts' | 'black_hearts' | 'fire_burst' | 'sakura_petals' | 'gold_stars' | 'rainbow_burst'; createdAt: number };
   communityCards: Card[];
   pot: number;
   currentBet: number;
