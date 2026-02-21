@@ -236,7 +236,10 @@ async function broadcastPokerState(code: string) {
 
 async function broadcastUnoState(code: string) {
   const lobby = unoGame.getLobby(code);
-  if (!lobby) return;
+  if (!lobby) {
+    if (IS_DEV) console.log(`[broadcast:uno] ${code} - lobby not found, skip`);
+    return;
+  }
 
   // ── Award +5 coins to winner (exactly once) ──
   if (lobby.winnerId && !lobby.rewardIssued) {
@@ -258,14 +261,20 @@ async function broadcastUnoState(code: string) {
   maybeEmitCelebration('uno', code, lobby.celebration ?? null);
 
   const recipients = [...lobby.players, ...((lobby as any).spectators || [])];
+  let emittedCount = 0;
   for (const p of recipients) {
     const socketId = playerToSocket.get(`uno:${p.playerId}`);
-    if (!socketId) continue;
+    if (!socketId) {
+      if (IS_DEV) console.log(`[broadcast:uno] ${code} - no socketId for ${p.playerId}, skip`);
+      continue;
+    }
     const clientState = unoGame.getClientState(code, p.playerId);
     if (clientState) {
       unoNsp.to(socketId).emit('gameState', clientState);
+      emittedCount++;
     }
   }
+  if (IS_DEV) console.log(`[broadcast:uno] ${code} - emitted gameState to ${emittedCount}/${recipients.length} recipients v${lobby.version ?? 0}`);
 
   if (lobby.phase === 'lobby') {
     unoNsp.in(roomName('uno', code)).emit('uno:roster', {
@@ -546,7 +555,9 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
             return;
           }
           const gameState = unoGame.getClientState(lobbyCode, user.id);
-          ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState });
+          // Include drawnCard in ACK for draw actions (drawer only — never leaked to room)
+          const drawnCard = (res as any).drawnCard ?? undefined;
+          ack?.({ success: true, accepted: true, version: (res as any).version ?? 0, gameState, drawnCard });
           broadcastUnoState(lobbyCode);
 
           // Notify room of draw for opponent card-back animation.
