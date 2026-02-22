@@ -36,7 +36,9 @@ router.get('/', async (req: Request, res: Response) => {
         ranked.nickname,
         ranked.avatar_url,
         ranked.coins::int AS coins,
-        ranked.wins::int AS wins
+        ranked.wins::int AS wins,
+        ranked.wins_uno::int AS wins_uno,
+        ranked.wins_poker::int AS wins_poker
       FROM (
         SELECT
           RANK() OVER (ORDER BY ${metricExpr} DESC, u.id ASC) AS rank,
@@ -44,7 +46,9 @@ router.get('/', async (req: Request, res: Response) => {
           u.nickname,
           u.avatar_url,
           u.coins,
-          (u.wins_poker + u.wins_uno) AS wins
+          (u.wins_poker + u.wins_uno) AS wins,
+          u.wins_uno,
+          u.wins_poker
         FROM users u
       ) ranked
       ORDER BY ranked.rank ASC
@@ -59,6 +63,8 @@ router.get('/', async (req: Request, res: Response) => {
       avatarUrl: x.avatar_url ?? null,
       coins: x.coins ?? 0,
       wins: x.wins ?? 0,
+      unoWins: x.wins_uno ?? 0,
+      pokerWins: x.wins_poker ?? 0,
     })) });
   } catch (err) {
     console.error('GET /leaderboard error:', err);
@@ -77,7 +83,15 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     const metricExpr = by === 'coins' ? 'u.coins' : '(u.wins_poker + u.wins_uno)';
 
     const q = `
-      SELECT rank::int AS rank, id, nickname, avatar_url, coins::int AS coins, wins::int AS wins
+      SELECT
+        rank::int AS rank,
+        id,
+        nickname,
+        avatar_url,
+        coins::int AS coins,
+        wins::int AS wins,
+        wins_uno::int AS wins_uno,
+        wins_poker::int AS wins_poker
       FROM (
         SELECT
           RANK() OVER (ORDER BY ${metricExpr} DESC, u.id ASC) AS rank,
@@ -85,7 +99,9 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
           u.nickname,
           u.avatar_url,
           u.coins,
-          (u.wins_poker + u.wins_uno) AS wins
+          (u.wins_poker + u.wins_uno) AS wins,
+          u.wins_uno,
+          u.wins_poker
         FROM users u
       ) ranked
       WHERE id = $1
@@ -106,6 +122,8 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
         avatarUrl: row.avatar_url ?? null,
         coins: row.coins ?? 0,
         wins: row.wins ?? 0,
+        unoWins: row.wins_uno ?? 0,
+        pokerWins: row.wins_poker ?? 0,
       },
     });
   } catch (err) {
