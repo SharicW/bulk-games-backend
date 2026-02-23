@@ -71,21 +71,22 @@ function isAllowedOrigin(origin?: string | null): boolean {
   return ALLOWED_ORIGINS.has(o) || RAILWAY_FRONTEND_REGEX.test(o);
 }
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (isAllowedOrigin(origin)) return cb(null, true);
-      console.warn('[CORS] Blocked origin:', origin);
-      cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  }),
-);
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, cb) => {
+    if (isAllowedOrigin(origin)) return cb(null, true);
+    console.warn('[CORS] Blocked origin:', origin);
+    cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
 
-// preflight
-app.options('*', cors());
+app.use(cors(corsOptions));
+
+// preflight — use the SAME config so mobile browsers see consistent
+// Access-Control-Allow-Origin between preflight and actual responses.
+app.options('*', cors(corsOptions));
 
 /* ───────────────────── Middleware ───────────────────── */
 
