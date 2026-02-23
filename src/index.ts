@@ -110,11 +110,12 @@ const io = new Server(httpServer, {
     credentials: true,
     methods: ['GET', 'POST'],
   },
-  // Increase ping timeout to survive Railway's 30s proxy idle timeout.
-  // Default pingInterval(25s) + pingTimeout(20s) can cause false disconnects
-  // behind a proxy.  Setting pingInterval<30s keeps the connection alive.
+  // pingInterval: how often server pings clients (keep < 30s for Railway proxy).
+  // pingTimeout: how long server waits for pong before disconnecting.
+  // Reduced from 30s → 20s so mobile dead sockets are detected ~10s faster.
+  // Total dead-socket detection window: pingInterval(20s) + pingTimeout(20s) = 40s.
   pingInterval: 20000,
-  pingTimeout: 30000,
+  pingTimeout: 20000,
   // Allow both transports; websocket is preferred, polling is the fallback.
   // Railway supports websockets natively; polling adds latency.
   transports: ['websocket', 'polling'],
@@ -365,7 +366,8 @@ function inferGameType(nspName: string, payload?: any): GameType {
 function attachHandlers(nsp: ReturnType<Server['of']>) {
   nsp.on('connection', (socket) => {
     const user: AuthUser = socket.data.user;
-    if (IS_DEV) console.log(`[connect] ${nsp.name} userId=${user.id} socketId=${socket.id} role=${user.role}`);
+    // Always log connects (concise — safe for production, helps mobile debugging)
+    logInfo(`[connect] ${nsp.name} userId=${user.id} socketId=${socket.id}`);
 
     socket.emit('test', { message: 'Backend works', userId: user.id });
 
@@ -703,7 +705,7 @@ function attachHandlers(nsp: ReturnType<Server['of']>) {
         return;
       }
 
-      if (IS_DEV) console.log(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} - starting ${DISCONNECT_GRACE_MS}ms grace`);
+      logInfo(`[disconnect] ${nsp.name} userId=${userId} socketId=${socket.id} code=${lobbyCode} - grace ${DISCONNECT_GRACE_MS}ms`);
 
       /* Mark player as disconnected right away so others see the status.
        * We must bump the lobby version here so the broadcast carries a new
@@ -798,7 +800,7 @@ function cancelDisconnectTimer(gameType: GameType, userId: string): boolean {
   if (timer) {
     clearTimeout(timer);
     disconnectTimers.delete(key);
-    if (IS_DEV) console.log(`[reconnect] cancelled disconnect timer for ${key}`);
+    logInfo(`[reconnect] cancelled grace timer for ${key} (mobile rejoin)`);
     return true;
   }
   return false;
