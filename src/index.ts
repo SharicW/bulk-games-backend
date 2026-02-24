@@ -110,12 +110,20 @@ const io = new Server(httpServer, {
     credentials: true,
     methods: ['GET', 'POST'],
   },
-  // pingInterval: how often server pings clients (keep < 30s for Railway proxy).
-  // pingTimeout: how long server waits for pong before disconnecting.
-  // Reduced from 30s → 20s so mobile dead sockets are detected ~10s faster.
-  // Total dead-socket detection window: pingInterval(20s) + pingTimeout(20s) = 40s.
+  // pingInterval: how often the server sends a ping (kept < 30 s so Railway's
+  //   30 s proxy idle-timeout never fires — the ping resets the idle timer).
+  // pingTimeout: how long the server waits for a pong before disconnecting.
+  //   Must be generous enough to survive Railway's added latency (10-15 ms in
+  //   good conditions, but can spike to several seconds under load).
+  //   30 s gives a comfortable buffer while still detecting dead sockets.
+  //   Dead-socket window = pingInterval(20s) + pingTimeout(30s) = 50 s.
+  //
+  // ⚠️  DO NOT lower pingTimeout below 25 s on Railway.
+  //   A previous change set it to 20 s which caused false "ping timeout"
+  //   disconnects → auto-reconnect → joinLobby timeout loops on both
+  //   mobile AND desktop.  This reverts it to the original correct value.
   pingInterval: 20000,
-  pingTimeout: 20000,
+  pingTimeout: 30000,
   // Allow both transports; websocket is preferred, polling is the fallback.
   // Railway supports websockets natively; polling adds latency.
   transports: ['websocket', 'polling'],
