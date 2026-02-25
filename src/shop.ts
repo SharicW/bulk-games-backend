@@ -16,22 +16,22 @@ export interface ShopItem {
 
 export const SHOP_ITEMS: ShopItem[] = [
   // Borders
-  { id: 'border_gold',     name: 'Golden Ring',     type: 'border', price: 50, description: 'A shiny golden border around your avatar.',          cssClass: 'cosmetic-border--gold' },
-  { id: 'border_rainbow',  name: 'Rainbow Ring',    type: 'border', price: 50, description: 'A colorful rainbow gradient border.',                cssClass: 'cosmetic-border--rainbow' },
-  { id: 'border_neon',     name: 'Neon Glow',       type: 'border', price: 50, description: 'Electric neon glow around your avatar.',             cssClass: 'cosmetic-border--neon' },
-  { id: 'border_fire',     name: 'Fire Ring',       type: 'border', price: 50, description: 'Blazing fire ring around your avatar.',              cssClass: 'cosmetic-border--fire' },
-  { id: 'border_ice',      name: 'Ice Ring',        type: 'border', price: 50, description: 'A crisp icy rim with a cool glow.',                  cssClass: 'cosmetic-border--ice' },
-  { id: 'border_emerald',  name: 'Emerald Ring',    type: 'border', price: 50, description: 'A deep jewel-green border with a pulsing emerald glow.', cssClass: 'cosmetic-border--emerald' },
-  { id: 'border_purple',   name: 'Purple Aura',     type: 'border', price: 50, description: 'A violet gradient ring with a subtle aura.',          cssClass: 'cosmetic-border--purple' },
-  { id: 'border_ruby',     name: 'Ruby Ring',       type: 'border', price: 50, description: 'A deep crimson ruby ring with a soft red glow.',      cssClass: 'cosmetic-border--ruby' },
+  { id: 'border_gold', name: 'Golden Ring', type: 'border', price: 50, description: 'A shiny golden border around your avatar.', cssClass: 'cosmetic-border--gold' },
+  { id: 'border_rainbow', name: 'Rainbow Ring', type: 'border', price: 50, description: 'A colorful rainbow gradient border.', cssClass: 'cosmetic-border--rainbow' },
+  { id: 'border_neon', name: 'Neon Glow', type: 'border', price: 50, description: 'Electric neon glow around your avatar.', cssClass: 'cosmetic-border--neon' },
+  { id: 'border_fire', name: 'Fire Ring', type: 'border', price: 50, description: 'Blazing fire ring around your avatar.', cssClass: 'cosmetic-border--fire' },
+  { id: 'border_ice', name: 'Ice Ring', type: 'border', price: 50, description: 'A crisp icy rim with a cool glow.', cssClass: 'cosmetic-border--ice' },
+  { id: 'border_starlight', name: 'Starlight Ring', type: 'border', price: 50, description: 'A glowing white starlight border.', cssClass: 'cosmetic-border--starlight' },
+  { id: 'border_purple', name: 'Purple Aura', type: 'border', price: 50, description: 'A violet gradient ring with a subtle aura.', cssClass: 'cosmetic-border--purple' },
+  { id: 'border_ruby', name: 'Ruby Ring', type: 'border', price: 50, description: 'A deep crimson ruby ring with a soft red glow.', cssClass: 'cosmetic-border--ruby' },
   // Effects
   // NOTE: effect_gold_stars is a built-in default effect (not listed in store catalog)
-  { id: 'effect_red_hearts',    name: 'Red Hearts',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.',         cssClass: 'cosmetic-effect--hearts-red' },
-  { id: 'effect_black_hearts',  name: 'Black Hearts',   type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.',       cssClass: 'cosmetic-effect--hearts-black' },
-  { id: 'effect_fire_burst',    name: 'Fire Burst',     type: 'effect', price: 80, description: 'Celebrate wins with a burst of fiery sparks.',       cssClass: 'cosmetic-effect--fire-burst' },
-  { id: 'effect_water_burst',   name: 'Water Burst',    type: 'effect', price: 80, description: 'Celebrate wins with a splash of cool water droplets.', cssClass: 'cosmetic-effect--water-burst' },
-  { id: 'effect_sakura_petals', name: 'Sakura Petals',  type: 'effect', price: 80, description: 'Celebrate wins with drifting sakura petals.',        cssClass: 'cosmetic-effect--sakura-petals' },
-  { id: 'effect_rainbow_burst', name: 'Rainbow Burst',  type: 'effect', price: 80, description: 'Celebrate wins with a burst of rainbow sparkles.',   cssClass: 'cosmetic-effect--rainbow-burst' },
+  { id: 'effect_red_hearts', name: 'Red Hearts', type: 'effect', price: 80, description: 'Celebrate wins with a burst of red hearts.', cssClass: 'cosmetic-effect--hearts-red' },
+  { id: 'effect_black_hearts', name: 'Black Hearts', type: 'effect', price: 80, description: 'Celebrate wins with a burst of black hearts.', cssClass: 'cosmetic-effect--hearts-black' },
+  { id: 'effect_fire_burst', name: 'Fire Burst', type: 'effect', price: 80, description: 'Celebrate wins with a burst of fiery sparks.', cssClass: 'cosmetic-effect--fire-burst' },
+  { id: 'effect_water_burst', name: 'Water Burst', type: 'effect', price: 80, description: 'Celebrate wins with a splash of cool water droplets.', cssClass: 'cosmetic-effect--water-burst' },
+  { id: 'effect_sakura_petals', name: 'Sakura Petals', type: 'effect', price: 80, description: 'Celebrate wins with drifting sakura petals.', cssClass: 'cosmetic-effect--sakura-petals' },
+  { id: 'effect_rainbow_burst', name: 'Rainbow Burst', type: 'effect', price: 80, description: 'Celebrate wins with a burst of rainbow sparkles.', cssClass: 'cosmetic-effect--rainbow-burst' },
 ];
 
 const ITEMS_MAP = new Map(SHOP_ITEMS.map(i => [i.id, i]));
@@ -102,7 +102,7 @@ router.post('/buy', authMiddleware, async (req: Request, res: Response) => {
 
     res.json({ success: true, coins: updated.rows[0].coins });
   } catch (err) {
-    await pool.query('ROLLBACK').catch(() => {});
+    await pool.query('ROLLBACK').catch(() => { });
     console.error('Shop buy error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
