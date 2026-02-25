@@ -25,6 +25,8 @@ export interface UnoPlayer {
   lastSeenAt: number;
   equippedBorder: string | null;
   equippedEffect: string | null;
+  /** Number of consecutive missed turns / timeouts */
+  missedTurns?: number;
 }
 
 export interface UnoLogEntry {
