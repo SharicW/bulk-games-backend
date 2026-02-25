@@ -833,7 +833,7 @@ export class UnoGame {
         ns = this.bumpState({ ...res.state, turnStartTime: null });
       } else {
         // Auto-draw (forced draw passes turn automatically)
-        const res = this.applyDraw(l, pid);
+        const res = this.applyDraw(l, pid, { forceTimeout: true });
         if (!res.success) return;
         ns = this.bumpState({ ...res.state, turnStartTime: null });
       }
@@ -862,38 +862,53 @@ export class UnoGame {
   private applyDraw(
     lobby: UnoGameState,
     pid: string,
-  ): { success: true; state: UnoGameState; drawnCard: UnoCard } | { success: false; error: string } {
-    if (lobby.drawnPlayable?.playerId === pid) return { success: false, error: 'Already drew a playable card' };
+    options?: { forceTimeout?: boolean }
+  ): { success: true; state: UnoGameState; drawnCard?: UnoCard } | { success: false; error: string } {
+    if (!options?.forceTimeout && lobby.drawnPlayable?.playerId === pid) return { success: false, error: 'Already drew a playable card' };
 
     const hand = lobby.hands[pid] || [];
     const top = lobby.discardPile.length ? lobby.discardPile[lobby.discardPile.length - 1].face : null;
-    const playableNow = hand.some((c) => {
-      if (!isPlayableCard(c.face, top, lobby.currentColor)) return false;
-      if (c.face.kind === 'wild4' && lobby.currentColor && hasColor(hand, lobby.currentColor)) return false;
-      return true;
-    });
-    if (playableNow) return { success: false, error: 'You have a playable card' };
+
+    if (!options?.forceTimeout) {
+      const playableNow = hand.some((c) => {
+        if (!isPlayableCard(c.face, top, lobby.currentColor)) return false;
+        if (c.face.kind === 'wild4' && lobby.currentColor && hasColor(hand, lobby.currentColor)) return false;
+        return true;
+      });
+      if (playableNow) return { success: false, error: 'You have a playable card' };
+    }
 
     const drawn = drawCards(lobby, 1);
     const card = drawn.cards[0];
-    if (!card) return { success: false, error: 'Draw pile is empty' };
+    if (!card) {
+      let next = lobby;
+      const p = next.players[next.currentPlayerIndex];
+      next = addLog(next, { type: 'passed', playerId: pid, text: `${p.nickname} passes (deck empty)` });
+      next = { ...next, currentPlayerIndex: nextIndex(next.currentPlayerIndex, next.direction, next.players.length, 1) };
+      return { success: true, state: next };
+    }
 
     let next = drawn.state;
     const newHand = [...hand, card];
     next = { ...next, hands: { ...next.hands, [pid]: newHand } };
 
     const p = next.players[next.currentPlayerIndex];
-    next = addLog(next, { type: 'drew', playerId: pid, text: `${p.nickname} drew 1 card` });
-
-    const isPlayableDrawn =
-      isPlayableCard(card.face, top, next.currentColor) && !(card.face.kind === 'wild4' && next.currentColor && hasColor(newHand, next.currentColor));
-
-    if (isPlayableDrawn) {
-      next = addLog(next, { type: 'system', text: `Drawn card is playable` });
-      next = { ...next, drawnPlayable: { playerId: pid, cardId: card.id } };
-    } else {
-      next = addLog(next, { type: 'passed', playerId: pid, text: `${p.nickname} passes` });
+    if (options?.forceTimeout) {
+      next = addLog(next, { type: 'drew', playerId: pid, text: `${p.nickname} auto-drew 1 card (timeout)` });
       next = { ...next, currentPlayerIndex: nextIndex(next.currentPlayerIndex, next.direction, next.players.length, 1) };
+    } else {
+      next = addLog(next, { type: 'drew', playerId: pid, text: `${p.nickname} drew 1 card` });
+
+      const isPlayableDrawn =
+        isPlayableCard(card.face, top, next.currentColor) && !(card.face.kind === 'wild4' && next.currentColor && hasColor(newHand, next.currentColor));
+
+      if (isPlayableDrawn) {
+        next = addLog(next, { type: 'system', text: `Drawn card is playable` });
+        next = { ...next, drawnPlayable: { playerId: pid, cardId: card.id } };
+      } else {
+        next = addLog(next, { type: 'passed', playerId: pid, text: `${p.nickname} passes` });
+        next = { ...next, currentPlayerIndex: nextIndex(next.currentPlayerIndex, next.direction, next.players.length, 1) };
+      }
     }
 
     return { success: true, state: next, drawnCard: card };
