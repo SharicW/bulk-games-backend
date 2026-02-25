@@ -23,8 +23,12 @@ export interface Player {
   lastBet: number;
   equippedBorder: string | null;
   equippedEffect: string | null;
+  /** Number of consecutive missed turns / timeouts */
+  missedTurns?: number;
   /** Whether the player has chosen to reveal their cards at showdown */
   cardsRevealed?: boolean;
+  /** The subset of winning hole cards revealed at showdown */
+  revealedWinningCards?: Card[];
 }
 
 export type Street = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
@@ -140,12 +144,13 @@ export interface ClientPlayer {
   holeCards: Card[] | null;
   equippedBorder: string | null;
   equippedEffect: string | null;
+  revealedWinningCards?: Card[];
 }
 
 export interface ActionLogEntry {
   playerId: string;
   nickname: string;
-  action: PlayerAction;
+  action: PlayerAction | string;
   amount?: number;
   timestamp: number;
 }
