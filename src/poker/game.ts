@@ -403,8 +403,21 @@ export class PokerGame {
       }
     }
 
-    // Filter out players with no chips
-    const activePlayers = lobby.players.filter(p => p.stack > 0 && p.isConnected);
+    // Filter out players with no chips or disconnected
+    const toRemove = lobby.players.filter(p => p.stack <= 0 || !p.isConnected);
+    if (toRemove.length > 0) {
+      lobby.players = lobby.players.filter(p => p.stack > 0 && p.isConnected);
+      for (const p of toRemove) {
+        if (p.isConnected) {
+          spectators.push({ ...p, seatIndex: -1, folded: true, allIn: false, holeCards: [] });
+        }
+      }
+      lobby.spectators = spectators;
+      lobby.players.forEach((p, i) => { p.seatIndex = i; });
+      lobby.version = (lobby.version || 0) + 1;
+    }
+
+    const activePlayers = lobby.players;
 
     if (activePlayers.length < 2) {
       // Game over
@@ -495,7 +508,8 @@ export class PokerGame {
     code: string,
     odotpid: string,
     action: PlayerAction,
-    amount?: number
+    amount?: number,
+    isTimeout: boolean = false
   ): { success: boolean; error?: string; version?: number } {
     const lobby = this.lobbies.get(code);
     if (!lobby || !lobby.gameStarted) {
@@ -505,6 +519,10 @@ export class PokerGame {
     const currentPlayer = lobby.players[lobby.currentPlayerIndex];
     if (!currentPlayer || currentPlayer.playerId !== odotpid) {
       return { success: false, error: 'Not your turn' };
+    }
+
+    if (!isTimeout) {
+      currentPlayer.missedTurns = 0;
     }
 
     if (currentPlayer.folded || currentPlayer.allIn) {
@@ -901,12 +919,17 @@ export class PokerGame {
 
     const toCall = lobby.currentBet - currentPlayer.currentBet;
 
+    currentPlayer.missedTurns = (currentPlayer.missedTurns || 0) + 1;
+    if (currentPlayer.missedTurns >= 3) {
+      this.leaveLobby(code, currentPlayer.playerId);
+    }
+
     if (toCall === 0) {
       // Auto-check
-      this.handleAction(code, currentPlayer.playerId, 'check');
+      this.handleAction(code, currentPlayer.playerId, 'check', undefined, true);
     } else {
       // Auto-fold
-      this.handleAction(code, currentPlayer.playerId, 'fold');
+      this.handleAction(code, currentPlayer.playerId, 'fold', undefined, true);
     }
   }
 
@@ -935,10 +958,11 @@ export class PokerGame {
       isConnected: p.isConnected,
       lastAction: p.lastAction,
       lastBet: p.lastBet,
-      // Show hole cards: always for self; at showdown, only when cardsRevealed is true
-      holeCards: (p.playerId === requestingPlayerId || (isShowdown && p.cardsRevealed === true))
+      // Show hole cards: always for self
+      holeCards: (p.playerId === requestingPlayerId)
         ? p.holeCards
         : null,
+      revealedWinningCards: (isShowdown && p.playerId !== requestingPlayerId) ? p.revealedWinningCards : undefined,
       equippedBorder: p.equippedBorder ?? null,
       equippedEffect: p.equippedEffect ?? null,
     }));
@@ -996,10 +1020,6 @@ export class PokerGame {
     };
   }
 
-  /**
-   * Called when a winner decides to reveal or keep their hole cards hidden.
-   * Only valid during showdown phase.
-   */
   revealCards(code: string, playerId: string, reveal: boolean): { success: boolean; error?: string } {
     const lobby = this.lobbies.get(code);
     if (!lobby) return { success: false, error: 'Lobby not found' };
@@ -1009,7 +1029,43 @@ export class PokerGame {
     if (!player) return { success: false, error: 'Player not found' };
     if (player.folded) return { success: false, error: 'Folded players cannot reveal' };
 
+    const showdown = this.showdownResults.get(code);
+    const winnerIds = showdown ? showdown.filter(r => r.winnings > 0).map(r => r.playerId) : [];
+
+    if (!winnerIds.includes(playerId)) {
+      return { success: false, error: 'Only winners can reveal their winning cards' };
+    }
+
+    let winningHoleCards: Card[] | undefined;
+    let handName: string | undefined;
+
+    if (reveal && showdown) {
+      const result = showdown.find(r => r.playerId === playerId);
+      if (result) {
+        handName = result.hand.name;
+        // Find which of player's hole cards are in the best 5 combination
+        winningHoleCards = player.holeCards.filter(hc =>
+          result.hand.cards.some((rc: Card) => rc.rank === hc.rank && rc.suit === hc.suit)
+        );
+      }
+    }
+
     player.cardsRevealed = reveal;
+    if (reveal && winningHoleCards) {
+      player.revealedWinningCards = winningHoleCards;
+
+      const logs = this.actionLogs.get(code) || [];
+      const cardsStr = winningHoleCards.map((c: Card) => `${c.rank}${c.suit === 'hearts' ? '♥' : c.suit === 'diamonds' ? '♦' : c.suit === 'clubs' ? '♣' : '♠'}`).join(', ');
+      logs.push({
+        playerId: player.playerId,
+        nickname: player.nickname,
+        action: `Winner — ${handName} with [${cardsStr}]`,
+        timestamp: Date.now()
+      });
+      if (logs.length > 50) logs.shift();
+      this.actionLogs.set(code, logs);
+    }
+
     this.broadcastState(code);
     return { success: true };
   }
